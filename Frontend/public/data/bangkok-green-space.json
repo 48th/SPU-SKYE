@@ -1,0 +1,402 @@
+[
+  {
+    "district": "คลองเตย",
+    "population": 88304,
+    "greenAreaSqm": 1151880.84,
+    "greenAreaPerPerson": 13.04,
+    "accessibleParkAreaSqm": 364800.0,
+    "accessibleParkAreaPerPerson": 4.13
+  },
+  {
+    "district": "คลองสาน",
+    "population": 61832,
+    "greenAreaSqm": 251340.0,
+    "greenAreaPerPerson": 4.06,
+    "accessibleParkAreaSqm": 58728.0,
+    "accessibleParkAreaPerPerson": 0.95
+  },
+  {
+    "district": "คลองสามวา",
+    "population": 215427,
+    "greenAreaSqm": 966238.2,
+    "greenAreaPerPerson": 4.49,
+    "accessibleParkAreaSqm": 246452.8,
+    "accessibleParkAreaPerPerson": 1.14
+  },
+  {
+    "district": "คันนายาว",
+    "population": 93302,
+    "greenAreaSqm": 3264552.1,
+    "greenAreaPerPerson": 34.99,
+    "accessibleParkAreaSqm": 38732.3,
+    "accessibleParkAreaPerPerson": 0.42
+  },
+  {
+    "district": "จตุจักร",
+    "population": 154513,
+    "greenAreaSqm": 2169260.56,
+    "greenAreaPerPerson": 14.04,
+    "accessibleParkAreaSqm": 1276611.48,
+    "accessibleParkAreaPerPerson": 8.26
+  },
+  {
+    "district": "จอมทอง",
+    "population": 137869,
+    "greenAreaSqm": 474610.48,
+    "greenAreaPerPerson": 3.44,
+    "accessibleParkAreaSqm": 15292.0,
+    "accessibleParkAreaPerPerson": 0.11
+  },
+  {
+    "district": "ดอนเมือง",
+    "population": 165594,
+    "greenAreaSqm": 727296.12,
+    "greenAreaPerPerson": 4.39,
+    "accessibleParkAreaSqm": 273408.0,
+    "accessibleParkAreaPerPerson": 1.65
+  },
+  {
+    "district": "ดินแดง",
+    "population": 109047,
+    "greenAreaSqm": 218350.76,
+    "greenAreaPerPerson": 2.0,
+    "accessibleParkAreaSqm": 34426.8,
+    "accessibleParkAreaPerPerson": 0.32
+  },
+  {
+    "district": "ดุสิต",
+    "population": 72788,
+    "greenAreaSqm": 1151908.0,
+    "greenAreaPerPerson": 15.83,
+    "accessibleParkAreaSqm": 27760.0,
+    "accessibleParkAreaPerPerson": 0.38
+  },
+  {
+    "district": "ตลิ่งชัน",
+    "population": 100433,
+    "greenAreaSqm": 1391024.69,
+    "greenAreaPerPerson": 13.85,
+    "accessibleParkAreaSqm": 37781.6,
+    "accessibleParkAreaPerPerson": 0.38
+  },
+  {
+    "district": "ทวีวัฒนา",
+    "population": 80816,
+    "greenAreaSqm": 1821884.5,
+    "greenAreaPerPerson": 22.54,
+    "accessibleParkAreaSqm": 372920.6,
+    "accessibleParkAreaPerPerson": 4.61
+  },
+  {
+    "district": "ทุ่งครุ",
+    "population": 123887,
+    "greenAreaSqm": 589643.0,
+    "greenAreaPerPerson": 4.76,
+    "accessibleParkAreaSqm": 101280.0,
+    "accessibleParkAreaPerPerson": 0.82
+  },
+  {
+    "district": "ธนบุรี",
+    "population": 95666,
+    "greenAreaSqm": 273958.0,
+    "greenAreaPerPerson": 2.86,
+    "accessibleParkAreaSqm": 25640.0,
+    "accessibleParkAreaPerPerson": 0.27
+  },
+  {
+    "district": "บางกอกน้อย",
+    "population": 51091,
+    "greenAreaSqm": 271907.24,
+    "greenAreaPerPerson": 5.32,
+    "accessibleParkAreaSqm": 40174.0,
+    "accessibleParkAreaPerPerson": 0.79
+  },
+  {
+    "district": "บางกอกใหญ่",
+    "population": 58804,
+    "greenAreaSqm": 215236.0,
+    "greenAreaPerPerson": 3.66,
+    "accessibleParkAreaSqm": 8424.0,
+    "accessibleParkAreaPerPerson": 0.14
+  },
+  {
+    "district": "บางกะปิ",
+    "population": 140901,
+    "greenAreaSqm": 856722.87,
+    "greenAreaPerPerson": 6.08,
+    "accessibleParkAreaSqm": 183736.0,
+    "accessibleParkAreaPerPerson": 1.3
+  },
+  {
+    "district": "บางขุนเทียน",
+    "population": 185160,
+    "greenAreaSqm": 3683241.33,
+    "greenAreaPerPerson": 19.89,
+    "accessibleParkAreaSqm": 547056.0,
+    "accessibleParkAreaPerPerson": 2.95
+  },
+  {
+    "district": "บางเขน",
+    "population": 183306,
+    "greenAreaSqm": 1050650.76,
+    "greenAreaPerPerson": 5.73,
+    "accessibleParkAreaSqm": 166756.0,
+    "accessibleParkAreaPerPerson": 0.91
+  },
+  {
+    "district": "บางคอแหลม",
+    "population": 74846,
+    "greenAreaSqm": 353019.44,
+    "greenAreaPerPerson": 4.72,
+    "accessibleParkAreaSqm": 73803.52,
+    "accessibleParkAreaPerPerson": 0.99
+  },
+  {
+    "district": "บางแค",
+    "population": 191997,
+    "greenAreaSqm": 1014357.6,
+    "greenAreaPerPerson": 5.28,
+    "accessibleParkAreaSqm": 134111.0,
+    "accessibleParkAreaPerPerson": 0.7
+  },
+  {
+    "district": "บางซื่อ",
+    "population": 116600,
+    "greenAreaSqm": 283456.0,
+    "greenAreaPerPerson": 2.43,
+    "accessibleParkAreaSqm": 55284.0,
+    "accessibleParkAreaPerPerson": 0.47
+  },
+  {
+    "district": "บางนา",
+    "population": 84574,
+    "greenAreaSqm": 376844.0,
+    "greenAreaPerPerson": 4.46,
+    "accessibleParkAreaSqm": 27240.0,
+    "accessibleParkAreaPerPerson": 0.32
+  },
+  {
+    "district": "บางบอน",
+    "population": 98160,
+    "greenAreaSqm": 977908.34,
+    "greenAreaPerPerson": 9.96,
+    "accessibleParkAreaSqm": 171416.0,
+    "accessibleParkAreaPerPerson": 1.75
+  },
+  {
+    "district": "บางพลัด",
+    "population": 85791,
+    "greenAreaSqm": 277109.23,
+    "greenAreaPerPerson": 3.23,
+    "accessibleParkAreaSqm": 43972.0,
+    "accessibleParkAreaPerPerson": 0.51
+  },
+  {
+    "district": "บางรัก",
+    "population": 40549,
+    "greenAreaSqm": 170258.28,
+    "greenAreaPerPerson": 4.2,
+    "accessibleParkAreaSqm": 2450.8,
+    "accessibleParkAreaPerPerson": 0.06
+  },
+  {
+    "district": "บึงกุ่ม",
+    "population": 134892,
+    "greenAreaSqm": 843673.2,
+    "greenAreaPerPerson": 6.25,
+    "accessibleParkAreaSqm": 454935.2,
+    "accessibleParkAreaPerPerson": 3.37
+  },
+  {
+    "district": "ปทุมวัน",
+    "population": 38560,
+    "greenAreaSqm": 945122.6,
+    "greenAreaPerPerson": 24.51,
+    "accessibleParkAreaSqm": 729460.0,
+    "accessibleParkAreaPerPerson": 18.92
+  },
+  {
+    "district": "ประเวศ",
+    "population": 183562,
+    "greenAreaSqm": 3096657.79,
+    "greenAreaPerPerson": 16.87,
+    "accessibleParkAreaSqm": 2082306.76,
+    "accessibleParkAreaPerPerson": 11.34
+  },
+  {
+    "district": "ป้อมปราบศัตรูพ่าย",
+    "population": 35900,
+    "greenAreaSqm": 256540.64,
+    "greenAreaPerPerson": 7.15,
+    "accessibleParkAreaSqm": 80.0,
+    "accessibleParkAreaPerPerson": 0.002
+  },
+  {
+    "district": "พญาไท",
+    "population": 62275,
+    "greenAreaSqm": 206184.04,
+    "greenAreaPerPerson": 3.31,
+    "accessibleParkAreaSqm": 30685.0,
+    "accessibleParkAreaPerPerson": 0.49
+  },
+  {
+    "district": "พระโขนง",
+    "population": 84014,
+    "greenAreaSqm": 269578.35,
+    "greenAreaPerPerson": 3.21,
+    "accessibleParkAreaSqm": 14380.4,
+    "accessibleParkAreaPerPerson": 0.17
+  },
+  {
+    "district": "พระนคร",
+    "population": 38408,
+    "greenAreaSqm": 626671.52,
+    "greenAreaPerPerson": 16.32,
+    "accessibleParkAreaSqm": 270655.6,
+    "accessibleParkAreaPerPerson": 7.05
+  },
+  {
+    "district": "ภาษีเจริญ",
+    "population": 120980,
+    "greenAreaSqm": 384893.28,
+    "greenAreaPerPerson": 3.18,
+    "accessibleParkAreaSqm": 1600.0,
+    "accessibleParkAreaPerPerson": 0.01
+  },
+  {
+    "district": "มีนบุรี",
+    "population": 140449,
+    "greenAreaSqm": 970293.52,
+    "greenAreaPerPerson": 6.91,
+    "accessibleParkAreaSqm": 243046.8,
+    "accessibleParkAreaPerPerson": 1.73
+  },
+  {
+    "district": "ยานนาวา",
+    "population": 72413,
+    "greenAreaSqm": 485549.0,
+    "greenAreaPerPerson": 6.71,
+    "accessibleParkAreaSqm": 35010.25,
+    "accessibleParkAreaPerPerson": 0.48
+  },
+  {
+    "district": "ราชเทวี",
+    "population": 61377,
+    "greenAreaSqm": 699452.12,
+    "greenAreaPerPerson": 11.4,
+    "accessibleParkAreaSqm": 103376.0,
+    "accessibleParkAreaPerPerson": 1.68
+  },
+  {
+    "district": "ราษฎร์บูรณะ",
+    "population": 74092,
+    "greenAreaSqm": 291218.92,
+    "greenAreaPerPerson": 3.93,
+    "accessibleParkAreaSqm": 49593.0,
+    "accessibleParkAreaPerPerson": 0.67
+  },
+  {
+    "district": "ลาดกระบัง",
+    "population": 182191,
+    "greenAreaSqm": 737781.32,
+    "greenAreaPerPerson": 4.05,
+    "accessibleParkAreaSqm": 230796.8,
+    "accessibleParkAreaPerPerson": 1.27
+  },
+  {
+    "district": "ลาดพร้าว",
+    "population": 110660,
+    "greenAreaSqm": 660654.6,
+    "greenAreaPerPerson": 5.97,
+    "accessibleParkAreaSqm": 54536.48,
+    "accessibleParkAreaPerPerson": 0.49
+  },
+  {
+    "district": "วังทองหลาง",
+    "population": 102281,
+    "greenAreaSqm": 181937.7,
+    "greenAreaPerPerson": 1.78,
+    "accessibleParkAreaSqm": 7437.72,
+    "accessibleParkAreaPerPerson": 0.07
+  },
+  {
+    "district": "วัฒนา",
+    "population": 79736,
+    "greenAreaSqm": 147557.76,
+    "greenAreaPerPerson": 1.85,
+    "accessibleParkAreaSqm": 9900.0,
+    "accessibleParkAreaPerPerson": 0.12
+  },
+  {
+    "district": "สวนหลวง",
+    "population": 123291,
+    "greenAreaSqm": 750818.4,
+    "greenAreaPerPerson": 6.09,
+    "accessibleParkAreaSqm": 208000.0,
+    "accessibleParkAreaPerPerson": 1.69
+  },
+  {
+    "district": "สะพานสูง",
+    "population": 97812,
+    "greenAreaSqm": 546387.85,
+    "greenAreaPerPerson": 5.59,
+    "accessibleParkAreaSqm": 18724.0,
+    "accessibleParkAreaPerPerson": 0.19
+  },
+  {
+    "district": "สัมพันธวงศ์",
+    "population": 18329,
+    "greenAreaSqm": 140046.34,
+    "greenAreaPerPerson": 7.64,
+    "accessibleParkAreaSqm": 1918.28,
+    "accessibleParkAreaPerPerson": 0.1
+  },
+  {
+    "district": "สาทร",
+    "population": 69219,
+    "greenAreaSqm": 335893.56,
+    "greenAreaPerPerson": 4.85,
+    "accessibleParkAreaSqm": 197628.0,
+    "accessibleParkAreaPerPerson": 2.86
+  },
+  {
+    "district": "สายไหม",
+    "population": 212912,
+    "greenAreaSqm": 1153296.3,
+    "greenAreaPerPerson": 5.42,
+    "accessibleParkAreaSqm": 82519.04,
+    "accessibleParkAreaPerPerson": 0.39
+  },
+  {
+    "district": "หนองแขม",
+    "population": 154690,
+    "greenAreaSqm": 771567.76,
+    "greenAreaPerPerson": 4.99,
+    "accessibleParkAreaSqm": 16093.16,
+    "accessibleParkAreaPerPerson": 0.1
+  },
+  {
+    "district": "หนองจอก",
+    "population": 187987,
+    "greenAreaSqm": 1351805.48,
+    "greenAreaPerPerson": 7.19,
+    "accessibleParkAreaSqm": 203800.0,
+    "accessibleParkAreaPerPerson": 1.08
+  },
+  {
+    "district": "หลักสี่",
+    "population": 97352,
+    "greenAreaSqm": 1799057.28,
+    "greenAreaPerPerson": 18.48,
+    "accessibleParkAreaSqm": 41678.4,
+    "accessibleParkAreaPerPerson": 0.43
+  },
+  {
+    "district": "ห้วยขวาง",
+    "population": 84038,
+    "greenAreaSqm": 471358.75,
+    "greenAreaPerPerson": 5.61,
+    "accessibleParkAreaSqm": 51868.8,
+    "accessibleParkAreaPerPerson": 0.62
+  }
+]

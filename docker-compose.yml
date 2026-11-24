@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: ./Backend2
+    container_name: spu-skye-backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AIR4THAI_ALLOW_INSECURE: "${AIR4THAI_ALLOW_INSECURE:-1}"
+    restart: unless-stopped
+
+  station-backend:
+    build:
+      context: ./SPU-SKYE-live
+    container_name: spu-skye-station-backend
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      AIR4THAI_ALLOW_INSECURE: "${AIR4THAI_ALLOW_INSECURE:-1}"
+      PM25_AIR4THAI_DAILY: "1"
+      PM25_AQMTHAI_DAILY: "1"
+      PM25_NODE: /usr/bin/node
+      PM25_CHROMIUM_PATH: /usr/bin/chromium
+      PM25_STATION_DB: /data/station_pm25.sqlite3
+      PM25_STATION_MODEL_PATH: /app/models/station_extra_trees_bangkok_59.joblib
+    volumes:
+      - station-data:/data
+      - ./SPU-SKYE-live/daily_inbox:/app/daily_inbox:ro
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./Frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_STATION_API_URL: http://127.0.0.1:8001
+    container_name: spu-skye-frontend
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      - backend
+      - station-backend
+    restart: unless-stopped
+
+volumes:
+  station-data:

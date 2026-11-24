@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="th">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PM2.5 กรุงเทพฯ | SPU SKYE</title>
+<style>
+  :root { color-scheme: light; font-family: system-ui, sans-serif; color: #143333; background: #eaf2ef; }
+  body { margin: 0; }
+  main { margin: 8vh auto; max-width: 48rem; padding: 1.5rem; }
+  h1 { margin: 0 0 1.5rem; font-size: clamp(2rem, 5vw, 3.4rem); letter-spacing: -.04em; }
+  label, select { font-size: 1rem; }
+  select { display: block; width: 100%; color: inherit; padding: .7rem; margin: .4rem 0 1rem; background: white; border: 1px solid #56736d; border-radius: .45rem; }
+  section { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .8rem; }
+  article { padding: 1rem; border-radius: .7rem; background: white; border: 1px solid #c4d6d0; }
+  h2 { font-size: 1rem; margin: 0; }
+  output { display: block; margin: .8rem 0; font-size: 1.55rem; font-weight: 700; }
+  p { line-height: 1.6; }
+  a { color: #076453; text-underline-offset: .15em; }
+  .history { margin-top: .8rem; }
+  canvas { display: block; width: 100%; height: auto; margin-top: .6rem; }
+  canvas[hidden] { display: none; }
+</style>
+<main>
+  <h1>PM2.5 กรุงเทพฯ</h1>
+  <label for="station">สถานีตรวจวัด</label>
+  <select id="station" disabled></select>
+  <p id="status" role="status">กำลังอ่านข้อมูล Air4Thai</p>
+  <p><a href="https://air4thai.pcd.go.th/webV3/#/Report" target="_blank"
+        rel="noopener noreferrer">เปิดรายงานทางการ Air4Thai</a></p>
+  <p id="coverageStatus" role="status"></p>
+  <section>
+    <article>
+      <h2>ค่า PM2.5 ล่าสุดจากฟีด Air4Thai</h2>
+      <output id="current">—</output>
+      <p id="observed"></p>
+    </article>
+    <article>
+      <h2>พยากรณ์ค่าเฉลี่ยวันพรุ่งนี้</h2>
+      <output id="forecast">—</output>
+      <p id="details"></p>
+    </article>
+  </section>
+  <article class="history" id="hourlyCard" hidden>
+    <h2>พยากรณ์ PM2.5 ล่วงหน้า 6 ชั่วโมง</h2>
+    <p id="hourlyStatus" role="status"></p>
+    <ul id="hourlyPoints"></ul>
+  </article>
+  <article class="history">
+    <h2>ค่าเฉลี่ย PM2.5 รายวันย้อนหลัง 7 วัน</h2>
+    <p id="historyStatus" role="status">กำลังอ่านประวัติสถานี</p>
+    <canvas id="historyChart" width="720" height="250" hidden
+            aria-label="กราฟค่าเฉลี่ย PM2.5 รายวันย้อนหลัง 7 วัน" role="img"></canvas>
+    <table id="historyTable" hidden>
+      <thead><tr><th>วันที่</th><th>PM2.5 (µg/m³)</th><th>แหล่งข้อมูล</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </article>
+</main>
+<script>
+  const station = document.getElementById("station");
+  const status = document.getElementById("status");
+  const current = document.getElementById("current");
+  const observed = document.getElementById("observed");
+  const forecast = document.getElementById("forecast");
+  const details = document.getElementById("details");
+  const coverageStatus = document.getElementById("coverageStatus");
+  const historyStatus = document.getElementById("historyStatus");
+  const chart = document.getElementById("historyChart");
+  const historyTable = document.getElementById("historyTable");
+  const requestedStation = new URLSearchParams(location.search).get("station_id") ?? "02t";
+  const dateFormat = new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Bangkok"
+  });
+  let requestNumber = 0;
+  let historyRequest = 0;
+  let lastResult;
+
+  async function updateHistory() {
+    if (!station.value) return;
+    const request = ++historyRequest;
+    try {
+      const response = await fetch(
+        "/api/v1/stations/" + encodeURIComponent(station.value) + "/history/daily",
+        { cache: "no-store" }
+      );
+      if (!response.ok) throw new Error(response.status);
+      const data = await response.json();
+      if (request !== historyRequest) return;
+      const available = data.points.filter(point => point.pm25 !== null);
+      const days = new Intl.DateTimeFormat("th-TH", {
+        day: "numeric", month: "short", timeZone: "Asia/Bangkok"
+      });
+      const dayLabel = point => days.format(new Date(point.date + "T00:00:00+07:00"));
+      historyTable.tBodies[0].replaceChildren(...data.points.map(point => {
+        const row = document.createElement("tr");
+        for (const value of [dayLabel(point), point.pm25 ?? "—", point.source ?? "ไม่มีข้อมูล"]) {
+          row.insertCell().textContent = value;
+        }
+        return row;
+      }));
+      historyTable.hidden = false;
+      chart.hidden = !available.length;
+      historyStatus.textContent = "มีข้อมูล " + available.length + " จาก 7 วันก่อนวันนี้";
+      if (chart.hidden) return;
+      const ctx = chart.getContext("2d");
+      const left = 55, top = 24, right = chart.width - 18, bottom = chart.height - 34;
+      const max = Math.max(10, Math.ceil(Math.max(...available.map(p => p.pm25)) / 10) * 10);
+      const position = index => left + (index + 0.5) / data.points.length * (right - left);
+      ctx.clearRect(0, 0, chart.width, chart.height);
+      ctx.font = "14px system-ui";
+      ctx.fillStyle = "#143333";
+      ctx.fillText("µg/m³", 7, 15);
+      for (let index = 0; index <= 4; index++) {
+        const value = max * index / 4;
+        const y = bottom - index / 4 * (bottom - top);
+        ctx.strokeStyle = "#d3e2de";
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+        ctx.stroke();
+        ctx.fillText(String(value), 8, y + 4);
+      }
+      data.points.forEach((point, index) => {
+        const label = dayLabel(point);
+        ctx.fillText(label, position(index) - ctx.measureText(label).width / 2, bottom + 24);
+      });
+      ctx.fillStyle = "#087b68";
+      data.points.forEach((point, index) => {
+        if (point.pm25 === null) return;
+        const x = position(index);
+        const y = bottom - point.pm25 / max * (bottom - top);
+        ctx.beginPath();
+        ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    } catch {
+      if (request === historyRequest) {
+        chart.hidden = true;
+        historyTable.hidden = true;
+        historyStatus.textContent = "อ่านประวัติไม่ได้ชั่วคราว ระบบจะลองใหม่ในรอบถัดไป";
+      }
+    }
+  }
+
+  function render(data) {
+    const item = data.stations.find(item => item.stationId === station.value);
+    if (!item) return;
+    const hourly = item.hourlyForecast;
+    document.getElementById("hourlyCard").hidden = !hourly;
+    const hourlyPoints = document.getElementById("hourlyPoints");
+    hourlyPoints.replaceChildren();
+    if (hourly) {
+      const messages = {
+        station_not_supported: "ยังไม่พบแหล่งค่า PM2.5 รายชั่วโมงที่ยืนยันได้สำหรับสถานีนี้",
+        no_observations: "กำลังรอข้อมูลรายชั่วโมง",
+        missing_hourly_observations: "ค่ารายชั่วโมงที่โมเดลต้องใช้ยังมีไม่ครบ",
+        stale_observations: "ข้อมูลล่าสุดเก่าเกินไปสำหรับพยากรณ์รอบนี้",
+        model_unavailable: "โมเดลรายชั่วโมงไม่พร้อมใช้งาน"
+      };
+      const modelText = hourly.experimental ? "Extra Trees · ผลทดลองจากโมเดลจอมทอง" : "Extra Trees";
+      const statusText = hourly.reason ? messages[hourly.reason] : modelText;
+      document.getElementById("hourlyStatus").textContent = statusText
+        + (hourly.observedAt ? " · ข้อมูล " + hourly.source + " ล่าสุด " + dateFormat.format(new Date(hourly.observedAt)) : "");
+      for (const point of hourly.points) {
+        const row = document.createElement("li");
+        row.textContent = "+" + point.hoursAhead + " ชม. · "
+          + dateFormat.format(new Date(point.targetAt)) + " · " + point.predictedPM25 + " µg/m³";
+        hourlyPoints.append(row);
+      }
+    }
+    current.value = item.currentPM25 == null ? "ไม่มีค่าล่าสุด" : item.currentPM25 + " µg/m³";
+    observed.textContent = item.observedAt
+      ? dateFormat.format(new Date(item.observedAt)) + (item.isStale ? " · ข้อมูลล่าช้า" : "")
+      : "ไม่พบเวลาที่รายงาน";
+    forecast.value = item.forecastAvailable ? item.predictedPM25 + " µg/m³" : "ยังไม่มีพยากรณ์";
+    const reasons = {
+      station_daily_history_required: "ต้องมีค่าเฉลี่ยรายวันของสถานีครบ 14 วันก่อนวันนี้",
+      station_model_unavailable: "สถานีนี้ยังไม่มีโมเดล",
+      station_model_bundle_unavailable: "ยังโหลดโมเดลไม่ได้",
+      invalid_model_output: "โมเดลส่งผลลัพธ์ที่ใช้ไม่ได้"
+    };
+    const modelLabel = item.modelScope === "area"
+      ? data.modelName + " กลุ่ม" + item.modelArea
+      : data.modelName;
+    const detail = item.forecastAvailable ? modelLabel : (reasons[item.reason] ?? "");
+    const coverage = item.dailyCoverage;
+    const missing = coverage?.missingDates ?? [];
+    details.textContent = data.targetDate + " · " + detail
+      + (item.latestDailyDate ? " · ข้อมูลรายวันล่าสุด " + item.latestDailyDate : "");
+    if (item.reason === "station_daily_history_required" && missing.length) {
+      details.textContent += " · มี " + coverage.availableDays + "/" + coverage.requiredDays + " วัน"
+        + " · ขาด " + missing.map(day => day.slice(8) + "/" + day.slice(5, 7)).join(", ");
+    }
+  }
+
+  async function update() {
+    const request = ++requestNumber;
+    try {
+      const response = await fetch("/api/v1/forecast", { cache: "no-store" });
+      if (!response.ok) throw new Error(response.status);
+      const data = await response.json();
+      if (request !== requestNumber) return;
+      const selected = station.value || requestedStation.toLowerCase();
+      station.replaceChildren(...data.stations.map(item =>
+        new Option(item.name + " (" + item.stationId.toUpperCase() + ")"
+          + (item.forecastAvailable ? " · มีพยากรณ์" : ""), item.stationId)
+      ));
+      if (data.stations.some(item => item.stationId === selected)) station.value = selected;
+      station.disabled = false;
+      lastResult = data;
+      render(data);
+      coverageStatus.textContent = "พยากรณ์ได้ " + data.forecastCount + " จาก "
+        + data.stations.length + " สถานี";
+      updateHistory();
+      status.textContent = "ตรวจข้อมูลอัตโนมัติทุก 1 นาที · ระบบรับข้อมูลจาก Air4Thai รอบล่าสุด "
+        + dateFormat.format(new Date(data.fetchedAt));
+    } catch {
+      if (request === requestNumber) {
+        status.textContent = "เชื่อมต่อไม่ได้ชั่วคราว จะลองใหม่ในรอบถัดไป";
+        updateHistory();
+      }
+    }
+  }
+
+  station.addEventListener("change", () => {
+    if (lastResult) render(lastResult);
+    chart.hidden = true;
+    historyTable.hidden = true;
+    historyStatus.textContent = "กำลังอ่านประวัติสถานี";
+    updateHistory();
+  });
+  update();
+  setInterval(update, 60_000);
+</script>
+</html>
