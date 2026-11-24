@@ -14,3 +14,4 @@ __pycache__/
 *.sqlite3-shm
 daily_inbox/
 docker-compose.yml.bak
+/Frontend/.next-station-check/
