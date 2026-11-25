@@ -40,6 +40,7 @@ type Comparison = {
 };
 type IssuedComparison = {
   windowDays: number;
+  modelFile?: string;
   issuedCount: number;
   matchedCount: number;
   pendingCount: number;
@@ -127,12 +128,13 @@ function weatherCorrelations(payload: WeatherPayload, points: Comparison["points
 
 type HourlyExplanationResponse = {
   hourlyForecast: {
-    shap?: HourlyShap; reason?: string; observedAt?: string;
+    shap?: HourlyShap; reason?: string; observedAt?: string; modelName?: string;
     points?: { hoursAhead: number; targetAt: string; predictedPM25: number }[];
   };
 };
 
 function shapFeatureLabel(feature: string) {
+  if (feature === "hour_of_day") return "รอบเวลาในวัน (sin + cos)";
   const lag = /^lag(\d+)$/.exec(feature)?.[1];
   if (lag === "0") return "PM2.5 ชั่วโมงล่าสุด";
   if (lag) return "PM2.5 ย้อนหลัง " + lag + " ชม.";
@@ -495,7 +497,7 @@ export default function AdminPage() {
                 {issued.points.length > 0 && (
                   <div className="mt-3 overflow-x-auto">
                     <table className="w-full min-w-[39rem] text-left text-sm tabular-nums">
-                      <caption className="pb-2 text-left text-xs text-neutral-600">รายการล่าสุดในช่วง {issued.windowDays} วัน · หน่วย µg/m³</caption>
+                      <caption className="pb-2 text-left text-xs text-neutral-600">รายการล่าสุดในช่วง {issued.windowDays} วัน · หน่วย µg/m³{issued.modelFile && " · " + issued.modelFile}</caption>
                       <thead className="bg-neutral-100"><tr>
                         <th scope="col" className="p-2">เวลาออกผล</th>
                         <th scope="col" className="p-2">เวลาเป้าหมาย</th>
@@ -527,7 +529,7 @@ export default function AdminPage() {
             <p className="mt-1 text-sm text-neutral-600">ใช้สถานีและช่วงเวลาที่เลือกในส่วนทดสอบย้อนหลังด้านบน
               {comparisonId && " · " + comparisonId.toUpperCase() + " · ล่วงหน้า " + comparisonHorizon + " ชั่วโมง"}
             </p>
-            <h3 className="mt-4 font-bold">ปัจจัยที่โมเดลใช้ · SHAP</h3>
+            <h3 className="mt-4 font-bold">ปัจจัยที่โมเดลใช้ · SHAP{hourlyExplanation?.modelName && " · " + hourlyExplanation.modelName}</h3>
             {shap && !("reason" in shap) ? (
               <>
                 <p className="mt-3 font-semibold tabular-nums">ค่าอ้างอิง {formatReading(shap.baseValue, 2)} → ค่าพยากรณ์ {formatReading(shap.predictedPM25, 2)} µg/m³</p>
@@ -630,7 +632,7 @@ export default function AdminPage() {
           <WeatherModelExperiment stationId={comparisonId} horizon={comparisonHorizon} revision={revision} />
 
           <section className={panel} aria-labelledby="hourly-evaluation-title">
-            <h2 id="hourly-evaluation-title" className="text-lg font-bold">ผลทดสอบพยากรณ์ PM2.5 รายชั่วโมง</h2>
+            <h2 id="hourly-evaluation-title" className="text-lg font-bold">ผลทดสอบย้อนหลัง Extra Trees รุ่นก่อน</h2>
             <p className="mt-1 text-sm text-neutral-600">ผลย้อนหลังรวม {Math.max(...hourlyEvaluation.metrics.map(row => row.stations))} สถานี · 24–25 พ.ย. 2569 · แสดงภาพรวมทุกสถานีในชุดทดสอบ</p>
             <div className="mt-4 overflow-x-auto">
               <table className="w-full min-w-[34rem] text-left text-sm tabular-nums">

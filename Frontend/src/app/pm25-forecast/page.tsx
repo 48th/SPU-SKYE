@@ -10,7 +10,7 @@ import { formatObservedAt, formatReading, getThaiAqiMeta } from "@/lib/forecastS
 type Station = { stationId: string; name: string; district?: string; lat: number; lon: number; currentPM25: number | null; observedAt?: string; isStale?: boolean };
 type Reading = { observedAt: string; pm25: number };
 type Hourly = {
-  source?: string; observedAt?: string; reason?: string; missingHours?: string[]; experimental?: boolean;
+  source?: string; modelName?: string; observedAt?: string; reason?: string; missingHours?: string[]; experimental?: boolean;
   latestObservation?: Reading;
   points: { hoursAhead: number; targetAt: string; predictedPM25: number }[];
 };
@@ -346,7 +346,7 @@ export default function PM25ForecastPage() {
           <section className={panel + " p-4 sm:p-6"} aria-labelledby="pm25-hourly">
             <h2 id="pm25-hourly" className="text-lg font-bold">พยากรณ์ 1–6 ชั่วโมง</h2>
             <p className="mt-1 text-xs text-slate-600">
-              PM2.5 (µg/m³){hourly?.source && " · " + hourly.source}{hourlyPoints.length ? " · Extra Trees" : ""}
+              PM2.5 (µg/m³){hourly?.source && " · " + hourly.source}{hourlyPoints.length && hourly?.modelName ? " · " + hourly.modelName : ""}
               {hourly?.experimental && hourlyPoints.length ? " · ผลทดลอง" : ""}
             </p>
             {hourly?.observedAt && (

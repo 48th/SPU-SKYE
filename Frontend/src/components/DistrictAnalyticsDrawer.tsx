@@ -18,6 +18,7 @@ const stationApi = (process.env.NEXT_PUBLIC_STATION_API_URL || "http://127.0.0.1
 type HourlyForecast = {
   observedAt?: string;
   source?: string;
+  modelName?: string;
   experimental?: boolean;
   reason?: string;
   latestObservation?: { observedAt: string; pm25: number };
@@ -143,7 +144,7 @@ export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSectio
      {hourly?.forecast?.points.length ? (
        <>
         <p className="mt-1 text-xs text-neutral-600">
-         {hourly.forecast.source} · {formatObservedAt(hourly.forecast.observedAt)} · Extra Trees
+         {hourly.forecast.source} · {formatObservedAt(hourly.forecast.observedAt)}{hourly.forecast.modelName && " · " + hourly.forecast.modelName}
          {hourly.forecast.experimental && (th ? " · ผลทดลอง" : " · Experimental")}
         </p>
                 <div className="mt-4 overflow-x-auto rounded-2xl border border-white bg-gradient-to-br from-white/85 to-neutral-200/60">

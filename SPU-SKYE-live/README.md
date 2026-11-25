@@ -50,3 +50,13 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000
 เมื่อระบบเก็บค่าฝุ่นรายชั่วโมงแล้ว รัน `docker compose exec station-backend python hourly_weather_model.py` จากโฟลเดอร์หลักเพื่อฝึกโมเดลทดลอง ไฟล์โมเดลอยู่ใน SQLite volume ที่ `/data/hourly_weather_experiment.joblib` ส่วนแผงทดลองอยู่ในหน้าแอดมิน
 
 โมเดลทดลองใช้ค่าฝุ่นย้อนหลัง เวลาในวัน ความเร็วลม 10 เมตร ปริมาณฝนในชั่วโมงก่อนหน้า และความชื้นสัมพัทธ์จาก Open-Meteo เวลาเดียวกับค่าฝุ่นที่ใช้เป็นฐาน การประเมินเทียบ Extra Trees สองชุดที่ฝึกบนคู่สถานี–เวลาเดียวกัน โดยแยกช่วงฝึกกับทดสอบตามเวลา ข้อมูลอากาศย้อนหลังอาจต่างจากข้อมูลที่เข้าถึงได้ ณ เวลาจริง จึงต้องประเมินกับรอบพยากรณ์จริงเพิ่มเติมก่อนเปลี่ยนโมเดลหลัก ส่วน SHAP ใช้ตัวอย่างจากช่วงฝึกเป็นค่าอ้างอิง
+
+## โมเดลปัจจุบันใน Docker Compose
+
+- รายชั่วโมง 1–6 ชั่วโมงใช้ `models/hourly_hgb_9.joblib` (HistGradientBoosting) อินพุตคือ PM2.5 ปัจจุบันและย้อนหลัง 1, 2, 3, 6, 12, 24 ชั่วโมง กับ sin/cos ของเวลา รวม 9 ฟีเจอร์ ส่วน SHAP รวมคะแนน sin และ cos เป็นแถวเดียว จึงแสดง 8 กลุ่ม
+- ค่าเฉลี่ยวันพรุ่งนี้รายสถานียังคงใช้ `station_extra_trees_bangkok_59.joblib` กับ 10 ฟีเจอร์เดิม
+- Backend2 `POST /predict` ใช้ `PM25_daily_hgb_19.joblib` (HistGradientBoosting) กับฟีเจอร์ 19 ตัวตาม `Backend2/training/train_daily_hgb.py` ส่วนรุ่น Random Forest เดิมเลือกได้ผ่าน `PM25_MODEL_PATH`
+
+ฝึกโมเดลรายชั่วโมงด้วย `python train_hourly_hgb.py /path/to/new-hourly-bundle.joblib` ในสภาพแวดล้อมของ SPU-SKYE-live ที่อ่าน SQLite ได้ ฝึกโมเดล Backend2 ด้วย `python Backend2/training/train_daily_hgb.py /path/to/PM25_training_features.csv /path/to/new-daily-bundle.joblib` ในสภาพแวดล้อมของ Backend2 ทั้งสองสคริปต์แยกชุดฝึกและทดสอบตามเวลาและบันทึกคะแนนไว้กับโมเดล
+
+การทดลองรายชั่วโมงรอบแรกบนช่วงทดสอบสั้นให้ MAE สูงกว่า Extra Trees เดิมทั้ง 6 ระยะ สามารถใช้รุ่นเดิมใน Compose โดยตั้ง `PM25_HOURLY_MODEL_FILE=BKP102T-hourly-extra-trees.joblib` แล้วสร้างบริการรายสถานีใหม่

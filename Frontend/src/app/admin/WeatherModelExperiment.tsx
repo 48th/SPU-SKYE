@@ -64,7 +64,7 @@ export default function WeatherModelExperiment({ stationId, horizon, revision }:
     <section aria-labelledby="weather-experiment-title" className="rounded-2xl border border-neutral-200 bg-white/80 p-5 shadow-sm">
       <h2 id="weather-experiment-title" className="text-lg font-bold">โมเดลทดลอง PM2.5 และสภาพอากาศ</h2>
       <p className="mt-1 text-sm text-neutral-600">
-        ใช้ค่าฝุ่นย้อนหลัง เวลาในวัน ความเร็วลม ฝน และความชื้น
+        Extra Trees รุ่นทดลอง · ใช้ค่าฝุ่นย้อนหลัง เวลาในวัน ความเร็วลม ฝน และความชื้น
         {stationId && " · " + stationId.toUpperCase() + " · ล่วงหน้า " + horizon + " ชั่วโมง"}
       </p>
       {result?.contributions && result.inputs ? (

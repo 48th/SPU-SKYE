@@ -19,7 +19,7 @@ logger = logging.getLogger("pm25_api")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get(
     "PM25_MODEL_PATH",
-    os.path.join(BASE_DIR, "models", "PM25_model_bundle.joblib")
+    os.path.join(BASE_DIR, "models", "PM25_daily_hgb_19.joblib")
 )
 model_state = {"model": None, "features": [], "model_name": None, "error": None}
 

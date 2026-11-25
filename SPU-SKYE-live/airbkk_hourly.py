@@ -248,13 +248,16 @@ def run_hourly(stop):
         stop.wait(15 * 60)
 
 
+def hourly_model_path():
+    return os.environ.get("PM25_HOURLY_MODEL_PATH") or str(ROOT / "models/hourly_hgb_9.joblib")
+
+
 @lru_cache(maxsize=1)
 def load_model():
     import joblib
     import sklearn
 
-    model_path = os.getenv("PM25_HOURLY_MODEL_PATH")
-    bundle = joblib.load(model_path or ROOT / "models/BKP102T-hourly-extra-trees.joblib")
+    bundle = joblib.load(hourly_model_path())
     if (bundle["station_id"] != TRAINING_STATION or set(bundle["models"]) != set(range(1, 7))
             or bundle["sklearn_version"] != sklearn.__version__):
         raise ValueError("Incompatible AirBKK hourly model")
@@ -382,7 +385,13 @@ def explain_hourly_forecast(station_id, base, bundle, features, horizon):
     references = tuple(candidates[(i * len(candidates)) // count] for i in range(count))
     current = tuple(features[name] for name in feature_names)
     explanation = exact_hourly_shap(bundle["models"][horizon], feature_names, current, references)
-    return {"hoursAhead": horizon, "referenceCount": count, **explanation}
+    scores = {item["feature"]: item["value"] for item in explanation["contributions"]}
+    contributions = [item for item in explanation["contributions"] if item["feature"] not in {"sin", "cos"}]
+    contributions.append({"feature": "hour_of_day", "value": scores["sin"] + scores["cos"]})
+    return {
+        "hoursAhead": horizon, "referenceCount": count, **explanation,
+        "contributions": sorted(contributions, key=lambda item: abs(item["value"]), reverse=True),
+    }
 
 
 def hourly_forecast(station_id, now, *, diagnostics_only=False, shap_horizon=None):
@@ -401,7 +410,6 @@ def hourly_forecast(station_id, now, *, diagnostics_only=False, shap_horizon=Non
         return {"reason": "no_observations", "points": []}
     base = max(history)
     result = {"observedAt": base.isoformat(), "source": "AirBKK" if station_id in STATIONS else "AQMThai", "points": [],
-              "experimental": station_id != TRAINING_STATION,
               "latestObservation": {"observedAt": base.isoformat(), "pm25": history[base]}}
     if diagnostics_only:
         result["history"] = [
@@ -412,6 +420,8 @@ def hourly_forecast(station_id, now, *, diagnostics_only=False, shap_horizon=Non
     if now - base >= 2 * HOUR:
         return {**result, "reason": "stale_observations"}
     bundle = load_model()
+    result["modelName"] = bundle.get("model_name", type(bundle["models"][1]).__name__)
+    result["experimental"] = station_id not in bundle.get("training_stations", [TRAINING_STATION])
     needed = {lag: base - lag * HOUR for lag in bundle["lags"]}
     missing = sorted(stamp.isoformat() for stamp in needed.values() if stamp not in history)
     if missing:
@@ -438,7 +448,7 @@ def hourly_forecast(station_id, now, *, diagnostics_only=False, shap_horizon=Non
 def record_hourly_issuance(stop):
     """Record the first forecast computed for each station, base hour and horizon."""
     rows = []
-    model_file = os.path.basename(os.environ.get("PM25_HOURLY_MODEL_PATH") or "BKP102T-hourly-extra-trees.joblib")
+    model_file = os.path.basename(hourly_model_path())
     for station_id in dict.fromkeys((*STATIONS, *AQM_STATIONS)):
         if stop.is_set():
             break
@@ -465,15 +475,16 @@ def record_hourly_issuance(stop):
 
 def compare_issued_hourly(station_id, horizon, now):
     """Compare recorded forecasts against subsequent observations for the same station and hour."""
+    model_file = os.path.basename(hourly_model_path())
     with database() as conn:
         rows = conn.execute(
             """SELECT f.issued_at, f.base_at, f.target_at, f.predicted, f.persistence, f.model_file, a.pm25
                FROM hourly_forecast_issuance AS f
                LEFT JOIN airbkk_hourly AS a
                  ON a.station_id = f.station_id AND a.observed_at = f.target_at AND f.target_at <= ?
-               WHERE f.station_id = ? AND f.horizon = ? AND f.issued_at BETWEEN ? AND ?
+               WHERE f.station_id = ? AND f.horizon = ? AND f.model_file = ? AND f.issued_at BETWEEN ? AND ?
                ORDER BY f.target_at DESC""",
-            (now.isoformat(), station_id, horizon, (now - timedelta(days=7)).isoformat(), now.isoformat()),
+            (now.isoformat(), station_id, horizon, model_file, (now - timedelta(days=7)).isoformat(), now.isoformat()),
         ).fetchall()
     points = [
         {"issuedAt": issued_at, "baseAt": base_at, "targetAt": target_at, "predicted": predicted,
@@ -483,7 +494,7 @@ def compare_issued_hourly(station_id, horizon, now):
     matched = [point for point in points if point["actual"] is not None]
     pending = sum(datetime.fromisoformat(point["targetAt"]) > now for point in points)
     return {
-        "stationId": station_id, "horizon": horizon, "windowDays": 7,
+        "stationId": station_id, "horizon": horizon, "windowDays": 7, "modelFile": model_file,
         "issuedCount": len(points), "matchedCount": len(matched),
         "pendingCount": pending, "missingActualCount": len(points) - len(matched) - pending,
         "modelMae": sum(abs(point["predicted"] - point["actual"]) for point in matched) / len(matched) if matched else None,
