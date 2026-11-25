@@ -9,7 +9,7 @@ import logging
 import math
 from threading import Thread
 
-from airbkk_hourly import hourly_forecast, run_hourly
+from airbkk_hourly import STATIONS as AIRBKK_HOURLY_STATIONS, compare_hourly_forecast, hourly_forecast, run_airbkk_daily, run_hourly
 from typing import Any, Dict, List, Optional
 import joblib
 import pandas as pd
@@ -273,6 +273,7 @@ async def lifespan(app):
         logger.exception("Station forecast bundle unavailable")
     stop = start_collector()
     Thread(target=run_hourly, args=(stop,), name="airbkk-hourly", daemon=True).start()
+    Thread(target=run_airbkk_daily, args=(stop,), name="airbkk-daily", daemon=True).start()
     try:
         yield
     finally:
@@ -322,7 +323,7 @@ def station_history(station_id: str):
 
 
 @app.get("/api/v1/stations/{station_id}/history/daily")
-def station_daily_history(station_id: str):
+def station_daily_history(station_id: str, include_hourly: bool = False):
     sid = station_id.strip().upper()
     today = datetime.now(BKK_TZ).date()
     start = today - timedelta(days=7)
@@ -343,6 +344,17 @@ def station_daily_history(station_id: str):
                 "ข้อมูลรายวันที่นำเข้า"
             )
             values[day] = (value, provider)
+        hourly = {}
+        if include_hourly and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='airbkk_hourly'"
+        ).fetchone():
+            hourly = {day: (count, mean) for day, count, mean in conn.execute(
+                """SELECT substr(observed_at, 1, 10), COUNT(DISTINCT substr(observed_at, 12, 2)), AVG(pm25)
+                   FROM airbkk_hourly
+                   WHERE station_id=? AND observed_at>=? AND observed_at<?
+                   GROUP BY substr(observed_at, 1, 10)""",
+                (sid, start.isoformat(), today.isoformat()),
+            )}
     # Prefer the original AirBKK daily report when the archive covers a displayed day.
     archive = os.path.join(BASE_DIR, "airbkk-daily-2026-11-09-to-22.csv")
     if os.path.isfile(archive):
@@ -354,7 +366,15 @@ def station_daily_history(station_id: str):
     for offset in range(7):
         day = (start + timedelta(days=offset)).isoformat()
         value, provider = values.get(day, (None, None))
-        points.append({"date": day, "pm25": value, "source": provider})
+        point = {"date": day, "pm25": value, "source": provider}
+        if value is None and day in hourly:
+            count, mean = hourly[day]
+            point["hoursAvailable"] = count
+            if count == 24:
+                point.update(pm25=round(mean, 2),
+                             source="AirBKK" if sid in AIRBKK_HOURLY_STATIONS else "AQMThai",
+                             derivedFromHourly=True)
+        points.append(point)
     return {"stationId": sid, "unit": "ug/m3", "points": points}
 
 
@@ -513,12 +533,22 @@ def station_hourly_prediction(station_id: str):
     }
 
 
+@app.get("/api/v1/stations/{station_id}/forecast/hourly-comparison")
+def station_hourly_comparison(station_id: str, horizon: int = Query(1, ge=1, le=6)):
+    try:
+        return compare_hourly_forecast(station_id, horizon, datetime.now(BKK_TZ))
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning("Hourly comparison model unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail="Hourly comparison unavailable") from exc
+
+
 @app.get("/api/v1/forecast")
 def forecast_status(
     station_id: Optional[str] = Query(default=None),
     district: Optional[str] = Query(default=None),
     horizon: str = Query(default="24h"),
     refresh: bool = Query(default=False),
+    diagnostics: bool = False,
 ):
     if horizon not in {"24h", "1d", "tomorrow"}:
         raise HTTPException(status_code=422, detail="Only the next Bangkok calendar day is supported")
@@ -530,7 +560,8 @@ def forecast_status(
         candidates = [s for s in candidates if s["district"] == district]
     if not candidates:
         raise HTTPException(status_code=404, detail="No matching station")
-    issue_day = datetime.now(BKK_TZ).date()
+    now = datetime.now(BKK_TZ)
+    issue_day = now.date()
     target = (issue_day + timedelta(days=1)).isoformat()
     histories = station_histories() if station_bundle else {}
     required_days = [issue_day - timedelta(days=n) for n in range(14, 0, -1)]
@@ -555,7 +586,7 @@ def forecast_status(
         else:
             item["reason"] = "station_model_bundle_unavailable"
         try:
-            item["hourlyForecast"] = hourly_forecast(sid, datetime.now(BKK_TZ))
+            item["hourlyForecast"] = hourly_forecast(sid, now, diagnostics_only=diagnostics)
         except Exception:
             logger.exception("AirBKK hourly forecast unavailable")
             item["hourlyForecast"] = {"reason": "model_unavailable", "points": []}

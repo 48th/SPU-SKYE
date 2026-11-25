@@ -23,6 +23,7 @@ services:
       PM25_CHROMIUM_PATH: /usr/bin/chromium
       PM25_STATION_DB: /data/station_pm25.sqlite3
       PM25_STATION_MODEL_PATH: /app/models/station_extra_trees_bangkok_59.joblib
+      PM25_HOURLY_MODEL_PATH: "/app/models/${PM25_HOURLY_MODEL_FILE:-BKP102T-hourly-extra-trees.joblib}"
     volumes:
       - station-data:/data
       - ./SPU-SKYE-live/daily_inbox:/app/daily_inbox:ro

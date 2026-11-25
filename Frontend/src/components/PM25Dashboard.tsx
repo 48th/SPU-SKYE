@@ -1,4 +1,5 @@
 "use client";
+import { useStationFavorites } from "@/lib/stationFavorites";
 
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -21,7 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   BangkokSkylineBackdrop,
-  AirQualityMascot,
+  AirQualityExpression,
   NearbyStationBadge,
   TopTenBadge,
   MiniDustIcon,
@@ -85,13 +86,11 @@ export default function PM25Dashboard() {
   const [lang, setLang] = useState<"TH" | "EN">("TH");
   const [activeNav, setActiveNav] = useState<NavKey>("map");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileStationsOpen, setMobileStationsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("nearby");
   const [districtFilter, setDistrictFilter] = useState<"ALL" | District>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [favorites, setFavorites] = useState<Record<string, boolean>>({
-    "Bang Khen": true,
-    "Pathum Wan": true,
-  });
+  const { ids: favorites, toggle: toggleStationFavorite } = useStationFavorites();
 
   // Map interactive states
   const [zoom, setZoom] = useState(12);
@@ -195,6 +194,7 @@ export default function PM25Dashboard() {
   const handleOpenStation = useCallback(
     (station: DistrictStation, section: DrawerSection = "all") => {
       setSelectedStation(station);
+      setMobileStationsOpen(false);
       setDrawerSection(section);
       setDrawerOpen(true);
       setActiveNav(section === "hourly" ? "hourly" : section === "shap" ? "shap" : "map");
@@ -202,6 +202,26 @@ export default function PM25Dashboard() {
     },
     [horizon, loadStationForecast, selectedStation.id]
   );
+
+  useEffect(() => {
+    function openTool() {
+      const hash = window.location.hash;
+      if (hash === "#standards") {
+        setActiveNav("standards");
+        setDrawerOpen(false);
+        setShowStandardsModal(true);
+      } else if (hash === "#shap" && selectedStation.id) {
+        setShowStandardsModal(false);
+        handleOpenStation(selectedStation, "shap");
+      } else {
+        return;
+      }
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    }
+    openTool();
+    window.addEventListener("hashchange", openTool);
+    return () => window.removeEventListener("hashchange", openTool);
+  }, [handleOpenStation, selectedStation]);
 
   const handleHorizonChange = useCallback(
     (nextH: ForecastHorizon) => {
@@ -220,10 +240,10 @@ export default function PM25Dashboard() {
     handleManualRefresh();
   }, [handleManualRefresh]);
 
-  const toggleFavorite = useCallback((id: string, e: React.MouseEvent) => {
+  const toggleFavorite = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setFavorites((prev) => ({ ...prev, [id]: !prev[id] }));
-  }, []);
+    toggleStationFavorite(id);
+  };
 
   // Filtered and sorted district cards
   const visibleStations = useMemo(() => {
@@ -294,19 +314,19 @@ export default function PM25Dashboard() {
   return (
     <div className="bangkok-ui-font min-h-screen flex flex-col bg-gradient-to-br from-white via-neutral-100 to-neutral-200">
       {/* ── Top Civic Navigation Header layered over Cel-Shaded BangkokSkylineBackdrop ── */}
-      <header className="relative z-30 bg-white/65 backdrop-blur-xl border-b border-neutral-300/70 overflow-hidden">
+      <header className="relative z-30 hidden sm:block bg-white/65 backdrop-blur-xl border-b border-neutral-300/70 overflow-hidden">
         <BangkokSkylineBackdrop className="absolute inset-x-0 bottom-0 h-24 w-full pointer-events-none opacity-15 grayscale" />
 
         <div className="relative max-w-[1440px] mx-auto px-3 sm:px-6 py-2.5 sm:py-4 flex flex-wrap items-center justify-between gap-2 sm:gap-3 xl:gap-4">
           {/* Left: Circle Logo + SPU SKYE Wordmark + Subtitle */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 xl:flex-initial">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full overflow-hidden border border-neutral-300/70 bg-[#0F172A] shrink-0 shadow-sm">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full overflow-hidden shrink-0 shadow-sm">
               <img
                 src="/Logo/Circle_Logo.png"
                 alt="SPU SKYE Logo"
                 width={48}
                 height={48}
-                className="w-full h-full object-cover scale-[1.24]"
+                className="w-full h-full object-contain"
               />
             </div>
             <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 bg-white/75 backdrop-blur-md border border-neutral-300/70 rounded-2xl px-2.5 sm:px-3 py-1 sm:py-1.5 shadow-sm">
@@ -451,7 +471,7 @@ export default function PM25Dashboard() {
       {/* ── Main Content Area ── */}
       <main
         id="main-content"
-        className="flex-1 w-full max-w-[1440px] mx-auto px-2.5 sm:px-6 py-3 sm:py-6 flex flex-col gap-3 sm:gap-6"
+        className="flex-1 w-full max-w-[1440px] mx-auto sm:px-6 sm:py-6 flex flex-col sm:gap-6"
       >
         {initialLoading ? (
           <DashboardSkeleton />
@@ -463,10 +483,11 @@ export default function PM25Dashboard() {
                 ? "แผนที่คุณภาพอากาศและรายการสถานีกรุงเทพมหานคร"
                 : "Bangkok interactive air quality map and station list"
             }
-            className="relative rounded-2xl border border-neutral-300/70 bg-white/75 shadow-sm overflow-hidden flex flex-col xl:block xl:min-h-[760px]"
+            className="relative overflow-hidden flex flex-col sm:rounded-2xl sm:border sm:border-neutral-300/70 sm:bg-white/75 sm:shadow-sm xl:block xl:min-h-[760px]"
           >
             {/* Full-bleed Interactive Longdo Bangkok District Map Canvas */}
-            <div className="relative w-full h-[290px] sm:h-[420px] lg:h-[560px] xl:h-[760px] overflow-hidden bg-neutral-200">
+            <div className="relative w-full h-dvh mobile-map-viewport min-h-[18rem] sm:h-[420px] lg:h-[560px] xl:h-[760px] overflow-hidden bg-neutral-200">
+<style>{"@media (max-width: 639px) { .mobile-map-viewport .ldmap_bottomright, .mobile-map-viewport .ldmap_bottomleft { bottom: calc(4.8rem + env(safe-area-inset-bottom, 0px)) !important; } }"}</style>
               <LongdoPM25Map
                 stations={stations}
                 selectedStationId={selectedStation.id}
@@ -489,14 +510,26 @@ export default function PM25Dashboard() {
                 </span>
               </div>
 
-              {/* Floating Right-Side Comic Map Controls */}
-              <div className="absolute top-2.5 right-2.5 sm:top-4 sm:right-4 z-20 flex flex-col gap-1.5 sm:gap-3">
-                <div className="bg-white/75 backdrop-blur-md border border-neutral-300/70 rounded-lg sm:rounded-xl p-0.5 sm:p-1 flex flex-col gap-0.5 sm:gap-1 shadow-sm">
+              <div className="absolute right-3 top-3 z-20 grid gap-2 sm:hidden">
+                <button type="button" aria-label="ค้นหาและกรองสถานี" aria-expanded={mobileStationsOpen}
+                  onClick={() => setMobileStationsOpen(value => !value)}
+                  className="grid h-12 w-12 place-items-center rounded-2xl border border-neutral-200 bg-white/95 text-slate-800 shadow-md">
+                  <MagnifyingGlass size={23} aria-hidden="true" />
+                </button>
+                <button type="button" aria-label="กลับมุมมองกรุงเทพฯ"
+                  onClick={() => { setZoom(12); setResetSignal(value => value + 1); }}
+                  className="grid h-12 w-12 place-items-center rounded-2xl border border-neutral-200 bg-white/95 text-slate-800 shadow-md">
+                  <Crosshair size={22} aria-hidden="true" />
+                </button>
+              </div>
+              {/* Floating Map Controls */}
+              <div className="absolute right-2 top-2 z-20 hidden sm:flex gap-1.5 sm:right-4 sm:top-4 sm:flex-col sm:gap-3">
+                <div className="bg-white/75 backdrop-blur-md border border-neutral-300/70 rounded-xl p-0.5 sm:p-1 flex sm:flex-col gap-0.5 sm:gap-1 shadow-sm">
                   <button
                     type="button"
                     onClick={() => setZoom((z) => Math.min(16, z + 1))}
                     aria-label="Zoom in map"
-                    className="w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg flex items-center justify-center text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98]"
+                    className="h-11 w-11 sm:h-10 sm:w-10 rounded-md sm:rounded-lg flex items-center justify-center text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98]"
                   >
                     <Plus className="w-4 h-4 sm:w-[18px] sm:h-[18px]" weight="bold" aria-hidden />
                   </button>
@@ -504,7 +537,7 @@ export default function PM25Dashboard() {
                     type="button"
                     onClick={() => setZoom((z) => Math.max(8, z - 1))}
                     aria-label="Zoom out map"
-                    className="w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg flex items-center justify-center text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98]"
+                    className="h-11 w-11 sm:h-10 sm:w-10 rounded-md sm:rounded-lg flex items-center justify-center text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98]"
                   >
                     <Minus className="w-4 h-4 sm:w-[18px] sm:h-[18px]" weight="bold" aria-hidden />
                   </button>
@@ -515,20 +548,20 @@ export default function PM25Dashboard() {
                       setResetSignal((n) => n + 1);
                     }}
                     aria-label="Reset map zoom"
-                    className="w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg flex items-center justify-center text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98]"
+                    className="h-11 w-11 sm:h-10 sm:w-10 rounded-md sm:rounded-lg flex items-center justify-center text-slate-900 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98]"
                   >
                     <Crosshair className="w-4 h-4 sm:w-[18px] sm:h-[18px]" weight="bold" aria-hidden />
                   </button>
                 </div>
 
-                <div className="bg-white/75 backdrop-blur-md border border-neutral-300/70 rounded-lg sm:rounded-xl p-0.5 sm:p-1 flex flex-col gap-0.5 sm:gap-1 shadow-sm">
+                <div className="bg-white/75 backdrop-blur-md border border-neutral-300/70 rounded-xl p-0.5 sm:p-1 flex sm:flex-col gap-0.5 sm:gap-1 shadow-sm">
                   <button
                     type="button"
                     onClick={() => setShowPmLayer((v) => !v)}
                     aria-pressed={showPmLayer}
                     aria-label="Toggle PM2.5 coverage layer"
                     title={lang === "TH" ? "ชั้นข้อมูล PM2.5" : "PM2.5 layer"}
-                    className={`w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg flex items-center justify-center transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98] ${
+                    className={`h-11 w-11 sm:h-10 sm:w-10 rounded-md sm:rounded-lg flex items-center justify-center transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98] ${
                       showPmLayer
                         ? "bg-neutral-800 text-white border border-slate-900"
                         : "text-slate-800 hover:bg-slate-100"
@@ -542,7 +575,7 @@ export default function PM25Dashboard() {
                     aria-pressed={showWindLayer}
                     aria-label="Toggle wind layer"
                     title={lang === "TH" ? "ชั้นข้อมูลทิศทางลม" : "Wind layer"}
-                    className={`w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg flex items-center justify-center transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98] ${
+                    className={`h-11 w-11 sm:h-10 sm:w-10 rounded-md sm:rounded-lg flex items-center justify-center transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98] ${
                       showWindLayer
                         ? "bg-[#0284C7] text-white border border-slate-900"
                         : "text-slate-800 hover:bg-slate-100"
@@ -556,7 +589,7 @@ export default function PM25Dashboard() {
                     aria-expanded={showAlertsPopover}
                     aria-label="Toggle dust alerts"
                     title={lang === "TH" ? "แจ้งเตือนค่าฝุ่นเกินเกณฑ์" : "Dust alerts"}
-                    className={`relative w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg flex items-center justify-center transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98] ${
+                    className={`relative h-11 w-11 sm:h-10 sm:w-10 rounded-md sm:rounded-lg flex items-center justify-center transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600 active:scale-[0.98] ${
                       showAlertsPopover
                         ? "bg-[#F97316] text-white border border-slate-900"
                         : "text-slate-800 hover:bg-slate-100"
@@ -605,7 +638,7 @@ export default function PM25Dashboard() {
                             className="flex items-center justify-between gap-2 p-2 rounded-xl border border-neutral-300/70 bg-white/75 hover:bg-neutral-100/70 shadow-sm text-left"
                           >
                             <div className="flex items-center gap-2 min-w-0">
-                              <AirQualityMascot pm25={st.currentPM25} size={32} />
+                              <AirQualityExpression pm25={st.currentPM25} className="h-8 w-8" />
                               <div className="min-w-0">
                                 <p className="body-5 text-slate-900 truncate">
                                   {lang === "TH" ? st.nameTh : st.nameEn}
@@ -617,7 +650,7 @@ export default function PM25Dashboard() {
                             </div>
                             <span
                               className="caption-3 text-white px-2 py-0.5 rounded-md border border-slate-900 tabular-nums shrink-0"
-                              style={{ backgroundColor: m.color }}
+                              style={{ backgroundColor: m.color, color: m.tier === "Moderate" ? "#0F172A" : "#FFFFFF" }}
                             >
                               {formatReading(st.currentPM25)}
                             </span>
@@ -632,12 +665,16 @@ export default function PM25Dashboard() {
 
             {/* ── Collapsible Floating Left Sidebar / Mobile & iPad Station Panel ── */}
             <div
-              className={`lg:absolute lg:top-4 lg:left-4 lg:bottom-4 xl:bottom-44 z-20 p-0 flex items-start transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              className={`max-sm:absolute max-sm:inset-x-2 max-sm:bottom-2 max-sm:max-h-[65%] max-sm:z-40 ${mobileStationsOpen ? "max-sm:flex" : "max-sm:hidden"} lg:absolute lg:top-4 lg:left-4 lg:bottom-4 xl:bottom-44 z-20 p-0 flex items-start transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                 sidebarOpen ? "lg:translate-x-0" : "lg:-translate-x-[calc(100%-3rem)]"
               }`}
             >
-              <div className="w-full lg:w-[344px] xl:w-[376px] h-full bg-white/70 backdrop-blur-xl border-t lg:border border-neutral-300/70 rounded-none lg:rounded-2xl shadow-none shadow-sm flex flex-col overflow-hidden">
-                {/* Segmented Tabs with Cel-Shaded Illustrations */}
+              <div className="w-full lg:w-[344px] xl:w-[376px] h-full bg-white/70 backdrop-blur-xl border-t lg:border border-neutral-300/70 rounded-none lg:rounded-2xl max-sm:rounded-2xl max-sm:max-h-[52dvh] max-sm:bg-white max-sm:shadow-xl shadow-sm flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-3 pt-2 sm:hidden">
+                  <h2 className="text-sm font-bold">ค้นหาสถานี</h2>
+                  <button type="button" onClick={() => setMobileStationsOpen(false)} aria-label="ปิดรายการสถานี" className="grid h-11 w-11 place-items-center rounded-xl text-slate-700"><X size={20} aria-hidden="true" /></button>
+                </div>
+                {/* Station list tabs */}
                 <div className="p-2.5 sm:p-3 bg-neutral-100/70 border-b border-neutral-300/70 grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -728,7 +765,7 @@ export default function PM25Dashboard() {
                 <div className="flex-1 overflow-y-auto p-2.5 sm:p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-2.5 sm:gap-3 max-h-[360px] md:max-h-[440px] lg:max-h-none bg-neutral-100/45">
                   {visibleStations.length === 0 ? (
                     <div className="flex flex-col items-center justify-center text-center py-10 px-4 gap-3 bg-white/75 border border-neutral-300/70 rounded-2xl shadow-sm">
-                      <AirQualityMascot tier="Very Good" size={56} />
+                      <AirQualityExpression tier="Very Good" className="h-14 w-14" />
                       <div>
                         <p className="body-4 text-slate-900">
                           {lang === "TH"
@@ -755,7 +792,7 @@ export default function PM25Dashboard() {
                   ) : (
                     visibleStations.map((station) => {
                       const meta = getThaiAqiMeta(station.currentPM25);
-                      const isFav = !!favorites[station.id];
+                      const isFav = favorites.includes(station.id.toLowerCase());
                       const isSelected = selectedStation.id === station.id && drawerOpen;
                       const badgeTextColor = meta.tier === "Moderate" ? "#0F172A" : "#FFFFFF";
 
@@ -779,7 +816,7 @@ export default function PM25Dashboard() {
                           }`}
                         >
                           <div className="flex items-start gap-2.5 sm:gap-3">
-                            <AirQualityMascot pm25={station.currentPM25} size={44} className="shrink-0 sm:w-[52px] sm:h-[52px]" />
+                            <AirQualityExpression pm25={station.currentPM25} className="h-11 w-11 sm:h-[52px] sm:w-[52px]" />
 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start justify-between gap-2">
@@ -883,7 +920,7 @@ export default function PM25Dashboard() {
             </div>
 
             {/* ── Bottom 7 Day Bangkok Forecast Strip (Mobile Swipe + iPad Grid + Desktop Dock) ── */}
-            <div className="mx-2.5 my-2.5 sm:mx-4 sm:mb-4 lg:mt-4 xl:m-0 xl:absolute xl:bottom-4 xl:inset-x-4 z-20 bg-white/80 backdrop-blur-xl border border-neutral-300/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 shadow-sm flex flex-col gap-2">
+            <div className="mx-2.5 my-2.5 sm:mx-4 sm:mb-4 lg:mt-4 xl:m-0 xl:absolute xl:bottom-4 xl:inset-x-4 z-20 bg-white/80 backdrop-blur-xl border border-neutral-300/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 shadow-sm hidden sm:flex flex-col gap-2">
               <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 px-0.5 sm:px-1">
                 <h2 className="title-4 text-slate-900">{lang === "TH" ? "พยากรณ์วันพรุ่งนี้" : "Tomorrow’s forecast"}</h2>
                 {forecastData?.modelName && tomorrow && <span className="caption-5 text-slate-700">{forecastData.modelName}</span>}
@@ -904,7 +941,7 @@ export default function PM25Dashboard() {
         )}
 
         {/* Footer */}
-        <footer className="pt-2 flex flex-wrap items-center justify-between gap-4">
+        <footer className="pt-2 hidden sm:flex flex-wrap items-center justify-between gap-4">
           <p className="caption-5 text-slate-600">
             PM2.5 Sentinel ·{" "}
             {lang === "TH"
@@ -953,7 +990,7 @@ export default function PM25Dashboard() {
             }
           }}
         >
-          <div className="w-full max-w-2xl bg-white/75 border border-neutral-300/70 rounded-2xl p-6 shadow-sm flex flex-col gap-4 max-h-[85vh] overflow-y-auto">
+          <div className="w-full max-w-2xl bg-white/95 backdrop-blur-md border border-neutral-300/70 rounded-2xl p-6 shadow-sm flex flex-col gap-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="heading-6 text-slate-900">
@@ -982,22 +1019,21 @@ export default function PM25Dashboard() {
 
             <div className="flex flex-col gap-3">
               {THAI_AQI_TIERS.map((tier) => {
-                const badgeTextColor = tier.tier === "Moderate" ? "#0F172A" : "#FFFFFF";
                 return (
                   <div
                     key={tier.tier}
-                    style={{ backgroundColor: tier.bgTint }}
-                    className="rounded-xl border border-neutral-300/70 shadow-sm p-3 flex items-center gap-3"
+                    style={{ backgroundColor: tier.bgTint, borderLeftColor: tier.color }}
+                    className="rounded-xl border border-l-4 border-neutral-900/10 shadow-sm p-3 flex items-center gap-3"
                   >
-                    <AirQualityMascot tier={tier.tier} size={48} />
+                    <AirQualityExpression tier={tier.tier} className="h-12 w-12" />
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="body-4 text-slate-900">
                           {lang === "TH" ? tier.thaiLabel : tier.englishLabel}
                         </span>
                         <span
-                          className="caption-3 px-2 py-0.5 rounded-md border border-slate-900 tabular-nums"
-                          style={{ backgroundColor: tier.color, color: badgeTextColor }}
+                          className="caption-3 px-2.5 py-1 rounded-full border border-neutral-900/15 text-neutral-950 tabular-nums"
+                          style={{ backgroundColor: tier.color, color: tier.tier === "Moderate" ? "#0F172A" : "#FFFFFF" }}
                         >
                           {tier.rangeLabel} µg/m³
                         </span>

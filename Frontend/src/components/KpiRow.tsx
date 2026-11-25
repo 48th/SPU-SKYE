@@ -8,7 +8,7 @@ import {
   Target,
 } from "@phosphor-icons/react";
 import type { ForecastResponse } from "@/lib/forecastService";
-import { getAqiStatus, getAqiColor } from "@/lib/forecastService";
+import { getThaiAqiMeta } from "@/lib/forecastService";
 
 export function KpiRowSkeleton() {
   return (
@@ -64,12 +64,11 @@ function KpiCard({ label, icon, primary, secondary, badge }: KpiCardProps) {
 }
 
 function AqiBadge({ value }: { value: number }) {
-  const status = getAqiStatus(value);
-  const color = getAqiColor(status);
+  const { englishLabel: status, bgTint } = getThaiAqiMeta(value);
   return (
     <span
       className="inline-flex items-center px-2 py-0.5 rounded-md caption-3"
-      style={{ backgroundColor: `${color}1A`, color }}
+      style={{ backgroundColor: bgTint, color: "#0F172A" }}
       aria-label={`AQI status: ${status}`}
     >
       {status}

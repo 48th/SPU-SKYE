@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { getAirQualityExpression } from "@/components/CivicIllustrationAssets";
 import {
   getThaiAqiMeta,
   formatReading,
   formatObservedAt,
   type District,
   type DistrictStation,
-  type ThaiAqiTier,
 } from "@/lib/forecastService";
 
 const LONGDO_API_KEY = "e5b86bcad18d760d87dff873ab6174f4";
@@ -71,11 +71,13 @@ interface LongdoMapInstance {
 }
 
 interface LongdoNamespace {
+  UiComponent?: { None: number };
   Map: new (options: {
     placeholder: HTMLElement;
     location?: LongdoLocation;
     zoom?: number;
     lastView?: boolean;
+    ui?: number;
   }) => LongdoMapInstance;
   Marker: new (
     location: LongdoLocation,
@@ -114,8 +116,8 @@ export interface LongdoPM25MapProps {
 type MarkerDensityMode = "full" | "compact" | "mini";
 
 function getMarkerDensityMode(zoomLevel: number): MarkerDensityMode {
-  if (zoomLevel >= 12) return "full";
-  if (zoomLevel >= 10.5) return "compact";
+  if (zoomLevel >= 15) return "full";
+  if (zoomLevel >= 13) return "compact";
   return "mini";
 }
 
@@ -129,62 +131,11 @@ function escapeHtml(text: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function buildToonFaceSvg(
-  tier: ThaiAqiTier,
-  color: string,
-  sizePx = 38
-): string {
-  const shadowColor =
-    tier === "Very Good"
-      ? "#0284C7"
-      : tier === "Good"
-        ? "#16A34A"
-        : tier === "Moderate"
-          ? "#CA8A04"
-          : tier === "Unhealthy for Sensitive"
-            ? "#C2410C"
-            : "#B91C1C";
-
-  let faceMarks = "";
-  if (tier === "Very Good") {
-    faceMarks = `
-      <path d="M13.5 20.5C14.8 16.5 19.2 16.5 20.5 20.5" stroke="#0F172A" stroke-width="2.8" stroke-linecap="round"/>
-      <path d="M27.5 20.5C28.8 16.5 33.2 16.5 34.5 20.5" stroke="#0F172A" stroke-width="2.8" stroke-linecap="round"/>
-      <path d="M15.5 26.5C17 34 31 34 32.5 26.5H15.5Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="2.4" stroke-linejoin="round"/>
-    `;
-  } else if (tier === "Good") {
-    faceMarks = `
-      <circle cx="17" cy="20" r="2.8" fill="#0F172A"/>
-      <circle cx="31" cy="20" r="2.8" fill="#0F172A"/>
-      <path d="M17 27.5C19.8 32 28.2 32 31 27.5" stroke="#0F172A" stroke-width="2.8" stroke-linecap="round"/>
-    `;
-  } else if (tier === "Moderate") {
-    faceMarks = `
-      <circle cx="17" cy="21" r="2.6" fill="#0F172A"/>
-      <circle cx="31" cy="21" r="2.6" fill="#0F172A"/>
-      <path d="M17.5 29.5H30.5" stroke="#0F172A" stroke-width="2.8" stroke-linecap="round"/>
-    `;
-  } else if (tier === "Unhealthy for Sensitive") {
-    faceMarks = `
-      <circle cx="17" cy="20.5" r="2.5" fill="#0F172A"/>
-      <circle cx="31" cy="20.5" r="2.5" fill="#0F172A"/>
-      <path d="M12.5 26.5C12.5 24.5 14 23 16 23H32C34 23 35.5 24.5 35.5 26.5V32C35.5 36 30.2 38.5 24 38.5C17.8 38.5 12.5 36 12.5 32V26.5Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="2.4" stroke-linejoin="round"/>
-    `;
-  } else {
-    faceMarks = `
-      <path d="M14.5 18.5L19.5 22.5M19.5 18.5L14.5 22.5" stroke="#0F172A" stroke-width="2.5" stroke-linecap="round"/>
-      <path d="M28.5 18.5L33.5 22.5M33.5 18.5L28.5 22.5" stroke="#0F172A" stroke-width="2.5" stroke-linecap="round"/>
-      <path d="M12.5 26.5C12.5 24.5 14 23 16 23H32C34 23 35.5 24.5 35.5 26.5V32C35.5 36 30.2 38.5 24 38.5C17.8 38.5 12.5 36 12.5 32V26.5Z" fill="#FFFFFF" stroke="#0F172A" stroke-width="2.4" stroke-linejoin="round"/>
-    `;
-  }
-
-  return `
-    <svg width="${sizePx}" height="${sizePx}" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="24" cy="24" r="20" fill="${color}" stroke="#0F172A" stroke-width="2.5"/>
-      <path d="M36.5 9A19 19 0 0 1 11.5 38.5A18.5 18.5 0 0 0 36.5 9Z" fill="${shadowColor}"/>
-      ${faceMarks}
-    </svg>
-  `;
+function buildAirQualityFace(pm25: number, size: number): string {
+  const face = getAirQualityExpression(pm25);
+  const iconSize = Math.round(size * 0.8);
+  const icon = face.image ? `<img src="${face.image}" width="${iconSize}" height="${iconSize}" alt="">` : "–";
+  return `<span aria-hidden="true" style="display:grid;place-items:center;width:${size}px;height:${size}px;border-radius:50%;background:${face.tint};color:#334155;">${icon}</span>`;
 }
 
 function buildStationMarkerHtml(
@@ -192,59 +143,37 @@ function buildStationMarkerHtml(
   lang: "TH" | "EN",
   isSelected: boolean,
   showWindLayer: boolean,
-  density: MarkerDensityMode
+  density: MarkerDensityMode,
+  mobileNumbers: boolean
 ): string {
   const meta = getThaiAqiMeta(station.currentPM25);
   const pillText = meta.tier === "Moderate" ? "#0F172A" : "#FFFFFF";
   const label = escapeHtml((lang === "TH" ? station.nameTh : station.nameEn) + (station.district ? ` · เขต${station.district}` : "") + (station.isStale ? " · ข้อมูลเก่า" : ""));
 
-  // Zoomed way out (< 10.5): render tiny clutter-free translucent AQI dot without giant emoji faces
-  if (density === "mini") {
-    const dotSize = isSelected ? 15 : 11;
-    const dotShadow = isSelected
-      ? "box-shadow:0 0 0 2.5px #005A50, 1.5px 1.5px 0px #0f172a;"
-      : "box-shadow:1px 1px 0px #0f172a;";
-    const dotOpacity = isSelected ? 0.85 : 0.65;
-    const selectedBadge = isSelected
-      ? `<div style="margin-top:2px;padding:0px 5px;border-radius:9999px;background:${meta.color};color:${pillText};border:1.5px solid #0F172A;font-family:var(--bangkok-ui-font, system-ui);font-size:9.5px;font-weight:700;font-variant-numeric:tabular-nums;box-shadow:1px 1px 0px #0f172a;white-space:nowrap;">${formatReading(station.currentPM25)}</div>`
-      : "";
-
+  if (mobileNumbers) {
+    const size = isSelected ? 36 : 29;
     return `
-      <div title="${label} · ${formatReading(station.currentPM25)} µg/m³" style="display:inline-flex;flex-direction:column;align-items:center;transform:translate(-50%,-50%);cursor:pointer;user-select:none;white-space:nowrap;">
-        <div style="width:${dotSize}px;height:${dotSize}px;border-radius:9999px;background:${meta.color};border:1.5px solid #0F172A;opacity:${dotOpacity};${dotShadow}"></div>
-        ${selectedBadge}
+      <div title="${label} · ${formatReading(station.currentPM25)} µg/m³"
+        style="display:grid;place-items:center;width:${size}px;height:${size}px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid white;box-shadow:${isSelected ? "0 0 0 2px #0f172a" : "0 1px 5px #0f172a45"};background:${meta.color};color:${pillText};font-family:var(--bangkok-ui-font,system-ui);font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer;">
+        ${formatReading(station.currentPM25)}
       </div>
     `;
   }
 
-  // Medium zoom (10.5 – 11.9): compact translucent emoji badge, hide district label unless selected
-  if (density === "compact") {
-    const ringStyle = isSelected
-      ? "box-shadow:0 0 0 2.5px #005A50, 1.5px 1.5px 0px #0f172a;"
-      : "box-shadow:1.5px 1.5px 0px #0f172a;";
-    const windBadge =
-      showWindLayer && Number.isFinite(station.windSpeedMs) && isSelected
-        ? `<span style="position:absolute;top:-7px;right:-14px;background:rgba(255,255,255,0.9);border:1.5px solid #0F172A;border-radius:9999px;padding:0px 4px;font-family:var(--bangkok-ui-font, system-ui);font-size:8.5px;font-weight:700;color:#0284C7;box-shadow:1px 1px 0px #0f172a;white-space:nowrap;">${formatReading(station.windSpeedMs)} m/s</span>`
-        : "";
-    const districtPill = isSelected
-      ? `<div style="padding:0px 5px;border-radius:5px;background:rgba(255,255,255,0.9);color:#0F172A;border:1.5px solid #0F172A;font-family:var(--bangkok-ui-font, system-ui);font-size:9.5px;font-weight:600;box-shadow:1px 1px 0px #0f172a;white-space:nowrap;">${label}</div>`
+  if (!isSelected && density !== "full") {
+    const dotSize = density === "mini" ? 9 : 12;
+    const wind = showWindLayer && density === "compact" && Number.isFinite(station.windSpeedMs)
+      ? `<span style="position:absolute;left:100%;top:50%;transform:translateY(-50%);padding:1px 4px;border-radius:5px;background:#fff;color:#334155;font-size:9px;font-weight:600;white-space:nowrap;">${formatReading(station.windSpeedMs)} m/s</span>`
       : "";
-
     return `
-      <div title="${label} · ${formatReading(station.currentPM25)} µg/m³" style="display:inline-flex;flex-direction:column;align-items:center;gap:1.5px;transform:translate(-50%,-50%);cursor:pointer;user-select:none;white-space:nowrap;">
-        <div style="position:relative;width:22px;height:22px;border-radius:9999px;background:rgba(255,255,255,0.65);border:1.5px solid #0F172A;display:flex;align-items:center;justify-content:center;opacity:0.65;${ringStyle}">
-          ${buildToonFaceSvg(meta.tier, meta.color, 18)}
-          ${windBadge}
-        </div>
-        <div style="padding:0px 5px;border-radius:9999px;background:${meta.color};color:${pillText};border:1.5px solid #0F172A;font-family:var(--bangkok-ui-font, system-ui);font-size:9.5px;font-weight:700;font-variant-numeric:tabular-nums;box-shadow:1px 1px 0px #0f172a;white-space:nowrap;">
-          ${formatReading(station.currentPM25)}
-        </div>
-        ${districtPill}
+      <div title="${label} · ${formatReading(station.currentPM25)} µg/m³" style="position:relative;display:grid;place-items:center;width:22px;height:22px;transform:translate(-50%,-50%);cursor:pointer;">
+        <span style="width:${dotSize}px;height:${dotSize}px;border-radius:50%;background:${meta.color};border:1.5px solid #fff;box-shadow:0 0 0 1px #1e293b66,0 1px 3px #1e293b38;"></span>
+        ${wind}
       </div>
     `;
   }
 
-  // Show the selected station name without overlapping other markers.
+  // Show the name only for the selected station.
   const ringStyle = isSelected
     ? "box-shadow:0 0 0 3px #005A50, 2px 2px 0px #0f172a;"
     : "box-shadow:0 2px 5px #0f172a38;";
@@ -254,8 +183,8 @@ function buildStationMarkerHtml(
 
   return `
     <div title="${label} · ${formatReading(station.currentPM25)} µg/m³" style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;transform:translate(-50%,-50%);cursor:pointer;user-select:none;white-space:nowrap;">
-      <div style="position:relative;width:${isSelected ? 29 : 24}px;height:${isSelected ? 29 : 24}px;border-radius:9999px;background:rgba(255,255,255,0.65);border:1px solid #334155;display:flex;align-items:center;justify-content:center;opacity:0.65;${ringStyle}">
-        ${buildToonFaceSvg(meta.tier, meta.color, isSelected ? 24 : 20)}
+      <div style="position:relative;width:${isSelected ? 29 : 24}px;height:${isSelected ? 29 : 24}px;border-radius:9999px;background:rgba(255,255,255,0.65);border:1px solid #334155;display:flex;align-items:center;justify-content:center;${ringStyle}">
+        ${buildAirQualityFace(station.currentPM25, isSelected ? 24 : 20)}
         ${windBadge}
       </div>
       <div style="padding:0px 6px;border-radius:9999px;background:${meta.color};color:${pillText};border:1px solid #334155;font-family:var(--bangkok-ui-font, system-ui);font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;box-shadow:1.5px 1.5px 0px #0f172a;white-space:nowrap;">
@@ -294,6 +223,16 @@ export default function LongdoPM25Map({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [liveZoom, setLiveZoom] = useState<number>(zoom);
   const densityMode = getMarkerDensityMode(liveZoom);
+  const [mobile, setMobile] = useState(false);
+  const mobileNumbers = mobile && liveZoom >= 12;
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 639px)");
+    const update = () => setMobile(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   // Initialize Longdo Map script and mount the map instance once
   useEffect(() => {
@@ -338,10 +277,11 @@ export default function LongdoPM25Map({
           location: { lon: centerLon, lat: centerLat },
           zoom,
           lastView: false,
+          ui: stations !== undefined ? longdo.UiComponent?.None : undefined,
         });
 
         // Hide overlapping built-in Longdo controls when custom dashboard controls are present
-        if (stations && stations.length > 0) {
+        if (stations !== undefined) {
           try {
             map.Ui?.DPad?.visible?.(false);
             map.Ui?.Zoombar?.visible?.(false);
@@ -487,7 +427,8 @@ export default function LongdoPM25Map({
                 lang,
                 isSelected,
                 showWindLayer,
-                densityMode
+                densityMode,
+                mobileNumbers || (mobile && isSelected)
               ),
               offset: { x: 0, y: 0 },
             },
@@ -515,6 +456,8 @@ export default function LongdoPM25Map({
     showPmLayer,
     showWindLayer,
     densityMode,
+    mobile,
+    mobileNumbers,
     centerLat,
     centerLon,
     sensorTitle,

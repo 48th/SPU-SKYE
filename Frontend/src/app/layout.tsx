@@ -1,3 +1,4 @@
+import MobileAirNavigation from "@/components/MobileAirNavigation";
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
@@ -32,8 +33,6 @@ export default function RootLayout({
       className={`${GeistSans.variable} ${GeistMono.variable}`}
     >
       <head>
-        <link rel="icon" href="/Logo/Circle_Logo.png" type="image/png" />
-        <link rel="apple-touch-icon" href="/Logo/Circle_Logo.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body className="font-sans antialiased bg-[#F8FAFC] text-slate-900">
@@ -44,6 +43,7 @@ export default function RootLayout({
           Skip to content
         </a>
         {children}
+        <MobileAirNavigation />
       </body>
     </html>
   );

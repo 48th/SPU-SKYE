@@ -1,0 +1,410 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import hourlyEvaluation from "./hourly-evaluation.json";
+import { formatObservedAt, formatReading, getThaiAqiMeta } from "@/lib/forecastService";
+
+type Reading = { observedAt: string; pm25: number };
+type Station = {
+  stationId: string;
+  name: string;
+  district: string | null;
+  currentPM25: number | null;
+  observedAt?: string;
+  isStale: boolean;
+  forecastAvailable: boolean;
+  dailyCoverage?: { availableDays: number; requiredDays: number };
+  hourlyForecast?: {
+    ready?: boolean;
+    reason?: string;
+    source?: string;
+    lastStoredAt?: string;
+    missingHours?: string[];
+    history?: Reading[];
+  };
+};
+type Snapshot = { stations: Station[]; fetchedAt?: string };
+type ErrorMetrics = { mae: number; rmse: number };
+type EvaluationGroup = { count: number; extraTrees: ErrorMetrics; persistence?: ErrorMetrics };
+type Evaluation = { overall?: EvaluationGroup; stations?: Record<string, EvaluationGroup> };
+type Comparison = {
+  stationId: string;
+  horizon: number;
+  source: string;
+  sampleCount: number;
+  mae: number | null;
+  reason?: string;
+  points: { targetAt: string; actual: number | null; predicted: number | null }[];
+};
+const comparisonTick = new Intl.DateTimeFormat("th-TH", {
+  timeZone: "Asia/Bangkok", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
+const targetHour = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Bangkok", hour: "2-digit", hourCycle: "h23",
+});
+const targetDate = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Bangkok" });
+
+function summarizeByTime(points: Comparison["points"]) {
+  const morning = { label: "05:00–09:59", count: 0, absoluteError: 0, signedError: 0, dates: new Set<string>() };
+  const other = { label: "ช่วงอื่น", count: 0, absoluteError: 0, signedError: 0, dates: new Set<string>() };
+  for (const { targetAt, actual, predicted } of points) {
+    if (actual == null || predicted == null) continue;
+    const target = new Date(targetAt);
+    const hour = Number(targetHour.format(target));
+    const group = hour >= 5 && hour < 10 ? morning : other;
+    const error = predicted - actual;
+    group.count++;
+    group.absoluteError += Math.abs(error);
+    group.signedError += error;
+    group.dates.add(targetDate.format(target));
+  }
+  return [morning, other];
+}
+
+const api = (process.env.NEXT_PUBLIC_STATION_API_URL || "http://127.0.0.1:8001").replace(/\/+$/, "");
+const reasons: Record<string, string> = {
+  missing_hourly_observations: "ข้อมูลบางชั่วโมงขาด",
+  stale_observations: "ค่ารายชั่วโมงเก่า",
+  no_observations: "ยังไม่มีค่ารายชั่วโมง",
+  station_not_supported: "ยังไม่รองรับ",
+  model_unavailable: "โมเดลยังไม่พร้อม",
+};
+const panel = "rounded-2xl border border-neutral-200 bg-white/80 p-5 shadow-sm";
+const time = (stamp?: string) => stamp ? formatObservedAt(stamp) : "—";
+const fresh = (s: Station) => s.currentPM25 != null && !s.isStale;
+const hourlyLabel = (s: Station) => s.hourlyForecast?.ready ? "พร้อม" :
+  reasons[s.hourlyForecast?.reason ?? ""] ?? "รอตรวจสอบ";
+
+async function request<T>(path: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch(api + path, { cache: "no-store", signal });
+  if (!response.ok) throw new Error(String(response.status));
+  return response.json();
+}
+
+export default function AdminPage() {
+  const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [evaluation, setEvaluation] = useState<Evaluation>();
+  const [query, setQuery] = useState("");
+  const [onlyIssues, setOnlyIssues] = useState(false);
+  const [selected, setSelected] = useState("");
+  const [comparisonHorizon, setComparisonHorizon] = useState(1);
+  const [comparison, setComparison] = useState<{ id: string; horizon: number; value: Comparison | null }>();
+  const [revision, setRevision] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]);
+    request<Snapshot>("/api/v1/forecast?diagnostics=true", signal).then(data => {
+      if (!controller.signal.aborted) {
+        setSnapshot(data);
+        setFailed(false);
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) setFailed(true);
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    request<Evaluation>("/api/v1/evaluation", signal).then(data => {
+      if (!controller.signal.aborted) setEvaluation(data);
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [revision]);
+
+  const stations = snapshot?.stations ?? [];
+  const issueCount = (station: Station) =>
+    Number(!fresh(station)) + Number(!station.hourlyForecast?.ready) + Number(!station.forecastAvailable);
+  const needle = query.trim().toLowerCase();
+  const visible = stations.filter(s =>
+    (!onlyIssues || issueCount(s) > 0) &&
+    [s.stationId, s.name, s.district].some(value => value?.toLowerCase().includes(needle))
+  ).sort((a, b) => issueCount(b) - issueCount(a) || a.name.localeCompare(b.name, "th"));
+  const station = stations.find(s => s.stationId === selected);
+  const comparisonId = selected || stations.find(item => item.stationId.toUpperCase() === "BKP102T")?.stationId || stations[0]?.stationId;
+  useEffect(() => {
+    if (!comparisonId) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
+    const url = "/api/v1/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly-comparison?horizon=" + comparisonHorizon;
+    request<Comparison>(url, signal).then(value => {
+      if (!controller.signal.aborted) setComparison({ id: comparisonId, horizon: comparisonHorizon, value });
+    }).catch(() => {
+      if (!controller.signal.aborted) setComparison({ id: comparisonId, horizon: comparisonHorizon, value: null });
+    });
+    return () => controller.abort();
+  }, [comparisonId, comparisonHorizon, revision]);
+  const comparisonResult = comparison?.id === comparisonId && comparison?.horizon === comparisonHorizon
+    ? comparison.value : undefined;
+  const lastPair = comparisonResult?.points.findLast(point => point.actual != null && point.predicted != null);
+
+  const hourlyReadings = station?.hourlyForecast?.history ?? [];
+  const newest = hourlyReadings.at(-1);
+  const readingsByHour = new Map(hourlyReadings.map(item => [Date.parse(item.observedAt), item.pm25]));
+  const chart = newest ? Array.from({ length: 24 }, (_, index) => {
+    const stamp = new Date(Date.parse(newest.observedAt) - (23 - index) * 3600000);
+    return { stamp, value: readingsByHour.get(stamp.getTime()) };
+  }) : [];
+  const chartMax = Math.max(1, ...hourlyReadings.map(item => item.pm25));
+  const evaluationRows = [
+    { label: "รวมชุดทดสอบ", group: evaluation?.overall },
+    ...(station ? [{ label: station.stationId, group: evaluation?.stations?.[station.stationId.toUpperCase()] }] : []),
+  ];
+  const lastStored = (source: string) => stations.reduce<string | undefined>((latest, item) => {
+    const hourly = item.hourlyForecast;
+    const stamp = hourly?.source === source ? hourly.lastStoredAt : undefined;
+    return stamp && (!latest || stamp > latest) ? stamp : latest;
+  }, undefined);
+
+  return (
+    <main id="main-content" className="bangkok-ui-font min-h-screen bg-neutral-100 px-4 py-6 text-neutral-900 sm:px-8">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <a href="/map" className="text-sm font-semibold text-neutral-600 hover:underline">← แผนที่คุณภาพอากาศ</a>
+            <h1 className="mt-2 text-3xl font-bold">สถานะระบบ PM2.5</h1>
+            <p className="mt-1 text-sm text-neutral-600">ติดตามข้อมูลตรวจวัดและความพร้อมของพยากรณ์รายสถานี</p>
+          </div>
+          <button type="button" disabled={loading} onClick={() => { setLoading(true); setRevision(value => value + 1); }}
+            className="rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+            {loading ? "กำลังโหลด…" : "อัปเดตสถานะ"}
+          </button>
+        </header>
+        {failed && <p role="alert" className="rounded-xl bg-amber-100 p-3 text-sm text-amber-950">โหลดสถานะไม่สำเร็จ {snapshot ? "กำลังแสดงข้อมูลรอบก่อน" : "ตรวจว่าบริการรายสถานีกำลังรัน แล้วกดอัปเดตอีกครั้ง"}</p>}
+        <section aria-label="ภาพรวมสถานี" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {[
+            ["มีค่าฝุ่นล่าสุด", stations.filter(fresh).length],
+            ["พร้อมพยากรณ์ 6 ชั่วโมง", stations.filter(s => s.hourlyForecast?.ready).length],
+            ["พยากรณ์ค่าเฉลี่ยวันพรุ่งนี้ได้", stations.filter(s => s.forecastAvailable).length],
+          ].map(([label, count]) => (
+            <div key={label} className={panel}>
+              <h2 className="text-sm font-medium text-neutral-600">{label}</h2>
+              <p className="mt-2 text-3xl font-bold tabular-nums">{snapshot ? count : "—"} <span className="text-sm font-normal text-neutral-600">{snapshot && ("จาก " + stations.length + " สถานี")}</span></p>
+            </div>
+          ))}
+        </section>
+
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
+          <div className="space-y-4">
+          <section className={panel}>
+            <h2 className="text-lg font-bold">สถานีตรวจวัด</h2>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <input type="search" aria-label="ค้นหาสถานี" placeholder="ค้นหาชื่อ เขต หรือรหัสสถานี" value={query}
+                onChange={event => setQuery(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-neutral-300 px-3 py-2 text-sm" />
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyIssues} onChange={event => setOnlyIssues(event.target.checked)} /> เฉพาะสถานีที่มีปัญหา</label>
+            </div>
+            <div className="mt-3 max-h-[34rem] overflow-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 bg-white text-neutral-600"><tr>
+                  <th className="p-2">สถานี</th><th className="p-2">PM2.5</th><th className="p-2">6 ชม.</th><th className="p-2">พรุ่งนี้</th>
+                </tr></thead>
+                <tbody>{visible.map(item => (
+                  <tr key={item.stationId} className={item.stationId === selected ? "border-t bg-neutral-100" : "border-t"}>
+                    <th scope="row" className="p-2 text-left">
+                      <button type="button" aria-pressed={selected === item.stationId} onClick={() => setSelected(item.stationId)}
+                        className="text-left font-semibold underline decoration-neutral-300 underline-offset-2 hover:decoration-current">{item.name}</button>
+                      <span className="block text-xs font-normal text-neutral-600">{item.district} · {item.stationId}</span>
+                    </th>
+                    <td className="p-2 tabular-nums">{item.currentPM25 == null ? "—" : formatReading(item.currentPM25)}
+                      <span className="block text-xs text-neutral-600">{time(item.observedAt)}{item.isStale && " · ข้อมูลเก่า"}</span>
+                    </td>
+                    <td className="p-2">{hourlyLabel(item)}</td>
+                    <td className="p-2">{item.forecastAvailable ? "พร้อม" : "ยังไม่พร้อม"}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              {visible.length === 0 && <p className="p-3 text-sm text-neutral-600">{loading ? "กำลังโหลดสถานี…" : snapshot ? "ไม่พบสถานีตามตัวกรอง" : "ยังไม่มีข้อมูลสถานี"}</p>}
+            </div>
+          </section>
+          <section className={panel} aria-labelledby="forecast-actual-title">
+            <h2 id="forecast-actual-title" className="text-lg font-bold">พยากรณ์เทียบค่าจริง</h2>
+            <p className="mt-1 text-sm text-neutral-600">คำนวณย้อนหลังด้วยโมเดลที่ระบบใช้อยู่ เทียบกับค่าที่สถานีวัดได้ในชั่วโมงเดียวกัน</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
+              <label className="min-w-0 text-xs font-semibold text-neutral-700">สถานี
+                <select value={comparisonId ?? ""} disabled={!stations.length} onChange={event => setSelected(event.target.value)}
+                  className="mt-1 block w-full min-w-0 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm">
+                  {!stations.length && <option value="">กำลังโหลดสถานี</option>}
+                  {stations.map(item => <option key={item.stationId} value={item.stationId}>{item.name} ({item.stationId.toUpperCase()})</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-neutral-700">พยากรณ์ล่วงหน้า
+                <select value={comparisonHorizon} onChange={event => setComparisonHorizon(Number(event.target.value))}
+                  className="mt-1 block w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm">
+                  {[1, 2, 3, 4, 5, 6].map(hour => <option key={hour} value={hour}>{hour} ชั่วโมง</option>)}
+                </select>
+              </label>
+            </div>
+            {comparisonResult?.points.length ? (
+              <>
+                <p className="mt-4 text-xs text-neutral-600">µg/m³ · {comparisonResult.source} · {comparisonResult.sampleCount.toLocaleString("th-TH")} คู่ที่เทียบได้
+                  {comparisonResult.mae != null && " · MAE " + formatReading(comparisonResult.mae, 2)}
+                </p>
+                <div className="mt-2 h-64 w-full min-w-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={comparisonResult.points} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                      <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 4" vertical={false} />
+                      <XAxis dataKey="targetAt" minTickGap={35} tick={{ fontSize: 10 }}
+                        tickFormatter={stamp => comparisonTick.format(new Date(stamp))} />
+                      <YAxis width={34} tick={{ fontSize: 11 }} />
+                      <Tooltip labelFormatter={label => time(String(label))} />
+                      <Legend />
+                      <Line dataKey="actual" name="ค่าตรวจวัดจริง" stroke="#05705f" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                      <Line dataKey="predicted" name="ค่าพยากรณ์ย้อนหลัง" stroke="#5b50b7" strokeDasharray="6 3" strokeWidth={2} dot={{ r: 2, strokeWidth: 0 }} isAnimationActive={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                {lastPair && <p className="mt-3 rounded-xl bg-neutral-100 px-3 py-2 text-sm text-neutral-700">
+                  {time(lastPair.targetAt)} · จริง <strong>{formatReading(lastPair.actual!)}</strong> · พยากรณ์ <strong>{formatReading(lastPair.predicted!)}</strong> µg/m³
+                </p>}
+                {!!comparisonResult.sampleCount && (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-semibold">ความคลาดเคลื่อนตามช่วงเวลาที่พยากรณ์ถึง</h3>
+                    <table className="mt-2 w-full text-xs tabular-nums sm:text-sm">
+                      <thead>
+                        <tr className="border-b border-neutral-200">
+                          <th scope="col" className="py-2 text-left">เวลาไทย</th>
+                          <th scope="col" className="text-right">คู่ / วัน</th>
+                          <th scope="col" className="text-right">MAE</th>
+                          <th scope="col" className="text-right">พยากรณ์ − จริง</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {summarizeByTime(comparisonResult.points).map(group => (
+                          <tr key={group.label} className="border-b border-neutral-100">
+                            <th scope="row" className="py-2 text-left font-medium">{group.label}</th>
+                            <td className="text-right">{group.count} / {group.dates.size}</td>
+                            <td className="text-right">{group.count ? formatReading(group.absoluteError / group.count, 2) : "—"}</td>
+                            <td className="text-right">{group.count ? new Intl.NumberFormat("th-TH", {
+                              signDisplay: "exceptZero", minimumFractionDigits: 2, maximumFractionDigits: 2,
+                            }).format(group.signedError / group.count) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <p className="mt-2 text-xs text-neutral-600">หน่วย µg/m³ · ค่าบวกหมายถึงทายสูงกว่าค่าจริงโดยเฉลี่ย · ช่วงทดสอบย้อนหลังสูงสุด 7 วัน</p>
+                  </div>
+                )}
+                {!comparisonResult.sampleCount && <p role="status" className="mt-2 text-sm text-neutral-600">มีค่าจริง แต่ช่วงนี้ยังไม่มีชั่วโมงที่ข้อมูลเข้าโมเดลครบสำหรับเทียบผล</p>}
+              </>
+            ) : <p role="status" className="mt-4 text-sm text-neutral-600">
+              {comparisonResult === null ? "โหลดผลเปรียบเทียบไม่ได้" : comparisonResult
+                ? "สถานีนี้ยังไม่มีค่าตรวจวัดในช่วงที่ใช้เทียบผล" : "กำลังโหลดผลเปรียบเทียบ…"}
+            </p>}
+          </section>
+
+          <section className={panel} aria-labelledby="hourly-evaluation-title">
+            <h2 id="hourly-evaluation-title" className="text-lg font-bold">ผลทดสอบพยากรณ์ PM2.5 รายชั่วโมง</h2>
+            <p className="mt-1 text-sm text-neutral-600">ผลย้อนหลังรวม {Math.max(...hourlyEvaluation.metrics.map(row => row.stations))} สถานี · 24–25 พ.ย. 2569 · แสดงภาพรวมทุกสถานีในชุดทดสอบ</p>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[34rem] text-left text-sm tabular-nums">
+                <caption className="sr-only">เปรียบเทียบโมเดลเดิมกับรุ่นฝึกเพิ่มบนข้อมูลทดสอบเดียวกัน</caption>
+                <thead className="bg-neutral-100 text-neutral-700"><tr>
+                  <th scope="col" className="p-2">ล่วงหน้า</th>
+                  <th scope="col" className="p-2 text-right">คู่ที่เทียบได้</th>
+                  <th scope="col" className="p-2 text-right">MAE เดิม</th>
+                  <th scope="col" className="p-2 text-right">MAE ฝึกเพิ่ม</th>
+                  <th scope="col" className="p-2 text-right">รุ่นใหม่คลาด ≤ 5</th>
+                </tr></thead>
+                <tbody>{hourlyEvaluation.metrics.map(row => (
+                  <tr key={row.horizon} className="border-t border-neutral-200">
+                    <th scope="row" className="p-2 font-medium">{row.horizon} ชม.</th>
+                    <td className="p-2 text-right">{row.test.toLocaleString("th-TH")}</td>
+                    <td className="p-2 text-right">{row.original.mae.toFixed(2)}</td>
+                    <td className={row.candidate.mae < row.original.mae ? "p-2 text-right font-semibold text-emerald-800" : "p-2 text-right font-semibold"}>{row.candidate.mae.toFixed(2)}</td>
+                    <td className="p-2 text-right">{row.candidate.within5.toFixed(1)}%</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-neutral-600">MAE คือค่าคลาดเฉลี่ย หน่วย µg/m³ · คลาด ≤ 5 คือสัดส่วนที่ต่างจากค่าจริงไม่เกิน ±5 µg/m³</p>
+            <p className="mt-1 text-xs text-neutral-600">ผลนี้มาจากการรันย้อนหลัง ส่วนผลเทียบคำพยากรณ์ที่ออกจริงยังไม่มีให้แสดง</p>
+          </section>
+          </div>
+
+          <aside className="space-y-4" aria-label="รายละเอียดระบบ">
+            <section className={panel} aria-live="polite">
+              <h2 className="text-lg font-bold">{station?.name ?? "รายละเอียดสถานี"}</h2>
+              {station ? <>
+                <p className="text-sm text-neutral-600">{station.district} · {station.stationId}</p>
+                <p className="mt-3 text-sm font-semibold">พยากรณ์ 6 ชั่วโมง · {hourlyLabel(station)}</p>
+                {station.dailyCoverage && <p className="text-sm text-neutral-600">ข้อมูลรายวัน {station.dailyCoverage.availableDays}/{station.dailyCoverage.requiredDays} วัน</p>}
+                {!!station.hourlyForecast?.missingHours?.length && <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm">
+                  <h3 className="font-semibold">ชั่วโมงที่โมเดลยังขาด</h3>
+                  <ul>{station.hourlyForecast.missingHours.map(stamp => <li key={stamp}>{time(stamp)}</li>)}</ul>
+                </div>}
+                {!!station.hourlyForecast?.history?.length && <>
+                  <h3 className="mt-4 text-sm font-semibold">ค่าตรวจวัดรายชั่วโมง · {station.hourlyForecast.source}</h3>
+                  <div aria-hidden="true" className="mt-2 flex h-20 items-end gap-px rounded-lg border border-neutral-200 bg-neutral-50 p-2">
+                    {chart.map(({ stamp, value }) => (
+                      <span key={stamp.toISOString()} className="min-w-0 flex-1 rounded-t-sm"
+                        title={time(stamp.toISOString()) + " · " + (value == null ? "ไม่มีข้อมูล" : formatReading(value) + " µg/m³")}
+                        style={value == null ? undefined : { height: Math.max(3, value / chartMax * 100) + "%", backgroundColor: getThaiAqiMeta(value).color }} />
+                    ))}
+                  </div>
+                  <p className="mt-1 text-xs text-neutral-600">24 ชั่วโมงถึงค่าล่าสุด · ช่องว่างคือชั่วโมงที่ไม่มีข้อมูล</p>
+                  <div className="mt-2 max-h-48 overflow-auto">
+                    <table className="w-full text-left text-xs">
+                      <caption className="sr-only">ค่าตรวจวัดรายชั่วโมงของสถานี</caption>
+                      <thead className="sticky top-0 bg-white text-neutral-600"><tr>
+                        <th scope="col" className="px-2 py-1.5">เวลาวัด</th>
+                        <th scope="col" className="px-2 py-1.5 text-right">PM2.5 (µg/m³)</th>
+                      </tr></thead>
+                      <tbody>{[...chart].reverse().map(({ stamp, value }) => (
+                        <tr key={stamp.toISOString()} className="border-t border-neutral-100">
+                          <td className="px-2 py-1.5"><time dateTime={stamp.toISOString()}>{time(stamp.toISOString())}</time></td>
+                          <td className="px-2 py-1.5 text-right font-semibold tabular-nums"
+                            style={value == null ? undefined : { backgroundColor: getThaiAqiMeta(value).bgTint }}>
+                            {value == null ? "ไม่มีข้อมูล" : formatReading(value)}
+                          </td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </>}
+              </> : <p className="mt-2 text-sm text-neutral-600">เลือกชื่อสถานีในตารางเพื่อดูค่าตรวจวัดและชั่วโมงที่ขาด</p>}
+            </section>
+            <section className={panel}>
+              <h2 className="font-bold">ข้อมูลที่ระบบรับล่าสุด</h2>
+              <dl className="mt-2 space-y-2 text-sm">
+                {[["Air4Thai", snapshot?.fetchedAt], ["AirBKK", lastStored("AirBKK")], ["AQMThai", lastStored("AQMThai")]].map(([source, stamp]) => (
+                  <div key={source} className="flex flex-wrap justify-between gap-x-2"><dt>{source}</dt><dd className="text-neutral-600">{time(stamp)}</dd></div>
+                ))}
+              </dl>
+            </section>
+            <section className={panel}>
+              <h2 className="font-bold">ผลประเมิน Extra Trees</h2>
+              <p className="mt-1 text-xs text-neutral-600">ทดสอบย้อนหลังสำหรับค่าเฉลี่ยวันถัดไป</p>
+              {evaluation?.overall ? (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-left text-xs tabular-nums">
+                    <caption className="sr-only">ผลทดสอบย้อนหลังของโมเดลพยากรณ์ค่าเฉลี่ยวันถัดไป</caption>
+                    <thead className="bg-neutral-100 text-neutral-700"><tr>
+                      <th scope="col" className="p-2">ชุดทดสอบ</th>
+                      <th scope="col" className="p-2 text-right">จำนวน</th>
+                      <th scope="col" className="p-2 text-right">MAE</th>
+                      <th scope="col" className="p-2 text-right">RMSE</th>
+                    </tr></thead>
+                    <tbody>{evaluationRows.map(({ label, group }) => (
+                      <tr key={label} className="border-t border-neutral-200">
+                        <th scope="row" className="p-2 font-medium">{label}</th>
+                        {group ? <>
+                          <td className="p-2 text-right">{group.count.toLocaleString("th-TH")}</td>
+                          <td className="p-2 text-right">{group.extraTrees.mae}</td>
+                          <td className="p-2 text-right">{group.extraTrees.rmse}</td>
+                        </> : <td colSpan={3} className="p-2 text-neutral-600">ไม่มีผลประเมินรายสถานี</td>}
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  <p className="mt-2 text-xs text-neutral-600">MAE และ RMSE เป็นค่าคลาดเคลื่อน หน่วย µg/m³ ค่ายิ่งต่ำยิ่งดี</p>
+                  <p className="mt-1 text-xs text-neutral-600">พยากรณ์สด 1–6 ชั่วโมงยังไม่มีผลเทียบค่าจริง</p>
+                </div>
+              ) : <p className="mt-2 text-sm text-neutral-600">ยังไม่มีผลประเมินให้แสดง</p>}
+            </section>
+          </aside>
+        </div>
+      </div>
+    </main>
+  );
+}

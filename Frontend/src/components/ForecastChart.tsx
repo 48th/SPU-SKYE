@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { ChartLine } from "@phosphor-icons/react";
 import type { ForecastResponse } from "@/lib/forecastService";
-import { getAqiStatus, getAqiColor } from "@/lib/forecastService";
+import { getThaiAqiMeta } from "@/lib/forecastService";
 
 export function ForecastChartSkeleton() {
   return (
@@ -53,8 +53,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 
   const predicted = payload.find((p) => p.name === "XGBoost predicted")?.value;
   const actual = payload.find((p) => p.name === "Actual baseline")?.value;
-  const aqiStatus = predicted != null ? getAqiStatus(predicted) : null;
-  const aqiColor = aqiStatus ? getAqiColor(aqiStatus) : null;
+  const aqi = predicted != null ? getThaiAqiMeta(predicted) : null;
 
   return (
     <div
@@ -80,12 +79,12 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
           </span>
         </div>
       )}
-      {aqiStatus && aqiColor && (
+      {aqi && (
         <div
           className="mt-2 px-2 py-0.5 rounded-md caption-3 text-center"
-          style={{ backgroundColor: `${aqiColor}1A`, color: aqiColor }}
+          style={{ backgroundColor: aqi.bgTint, color: "#0F172A" }}
         >
-          {aqiStatus}
+          {aqi.englishLabel}
         </div>
       )}
     </div>

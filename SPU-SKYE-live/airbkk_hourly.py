@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+import os
 from datetime import datetime, timedelta
 from functools import lru_cache
 from urllib.parse import urlencode
@@ -24,13 +25,11 @@ HOUR = timedelta(hours=1)
 logger = logging.getLogger(__name__)
 
 
-def sync_batch(now, station_by_index, targets=None):
-    start = min(min(stamps) for stamps in targets.values()) if targets else now - timedelta(days=2)
-    end = max(max(stamps) for stamps in targets.values()) if targets else now
+def fetch_report(period, start, end, station_by_index):
     fields = [
-        ("groupid", "all"), ("parameterTags[]", "PM2.5"), ("data_type", "hourly"),
+        ("groupid", "all"), ("parameterTags[]", "PM2.5"), ("data_type", period),
         ("date_s", start.strftime("%d/%m/%Y")),
-        ("date_e", (end + timedelta(days=1)).strftime("%d/%m/%Y")),
+        ("date_e", end.strftime("%d/%m/%Y")),
         ("display_type", "table"),
         *[("MeasIndex[]", index) for index in station_by_index],
     ]
@@ -41,12 +40,68 @@ def sync_batch(now, station_by_index, targets=None):
     with urlopen(request, timeout=25) as response:
         report = json.load(response)
     if report.get("status") != "success":
-        raise RuntimeError("AirBKK hourly report unavailable")
-    columns = {
+        raise RuntimeError(f"AirBKK {period} report unavailable")
+    return report
+
+
+def report_columns(report, station_by_index):
+    return {
         item["Alias"]: station_by_index[str(item["MeasIndex"])]
         for item in report["arrParameter"]
         if str(item["MeasIndex"]) in station_by_index and item["ShortName"] == "PM2.5"
     }
+
+
+def sync_daily_batch(now, station_by_index):
+    end = now.date() - timedelta(days=1)
+    start = now.date() - timedelta(days=14)
+    report = fetch_report("daily", start, end, station_by_index)
+    columns = report_columns(report, station_by_index)
+    rows = {}
+    for entry in report["arrData"]:
+        try:
+            d, m, y = map(int, entry["Date_Time"].strip().split("/"))
+            day = datetime(y - 543 if y >= 2400 else y, m, d).date()
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        if not start <= day <= end:
+            continue
+        for alias, station in columns.items():
+            try:
+                value = float(entry.get(alias))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value) and value >= 0:
+                rows[station, day.isoformat()] = (value, now.isoformat(), "AirBKK official daily report")
+    with database() as conn:
+        result = conn.executemany(
+            "INSERT OR IGNORE INTO station_daily VALUES (?, ?, ?, ?, ?)",
+            [(*key, *row) for key, row in rows.items()],
+        )
+        return result.rowcount
+
+
+def run_airbkk_daily(stop):
+    mapping = list(STATIONS.items())
+    while not stop.is_set():
+        inserted = 0
+        for offset in range(0, len(mapping), 8):
+            if stop.is_set():
+                return
+            batch = {index: station for station, index in mapping[offset:offset + 8]}
+            try:
+                inserted += sync_daily_batch(datetime.now(BKK_TZ), batch)
+            except Exception:
+                logger.exception("AirBKK daily report unavailable for %s", list(batch.values()))
+        logger.info("AirBKK daily report: %s new station-days", inserted)
+        stop.wait(6 * 3600)
+
+
+def sync_batch(now, station_by_index, targets=None):
+    start = min(min(stamps) for stamps in targets.values()) if targets else now - timedelta(days=2)
+    end = max(max(stamps) for stamps in targets.values()) if targets else now
+    report = fetch_report("hourly", start, end + timedelta(days=1), station_by_index)
+    columns = report_columns(report, station_by_index)
     rows = {}
     for entry in report["arrData"]:
         try:
@@ -199,14 +254,78 @@ def load_model():
     import joblib
     import sklearn
 
-    bundle = joblib.load(ROOT / "models/BKP102T-hourly-extra-trees.joblib")
+    model_path = os.getenv("PM25_HOURLY_MODEL_PATH")
+    bundle = joblib.load(model_path or ROOT / "models/BKP102T-hourly-extra-trees.joblib")
     if (bundle["station_id"] != TRAINING_STATION or set(bundle["models"]) != set(range(1, 7))
             or bundle["sklearn_version"] != sklearn.__version__):
         raise ValueError("Incompatible AirBKK hourly model")
     return bundle
 
 
-def hourly_forecast(station_id, now):
+def hourly_features(history, base, lags):
+    row = {f"lag{lag}": history.get(base - lag * HOUR) for lag in lags}
+    if any(value is None for value in row.values()):
+        return None
+    angle = base.hour * math.pi / 12
+    return {**row, "sin": math.sin(angle), "cos": math.cos(angle)}
+
+
+def compare_hourly_forecast(station_id, horizon, now):
+    station_id = station_id.strip().upper()
+    source = "AirBKK" if station_id in STATIONS else "AQMThai"
+    result = {"stationId": station_id, "horizon": horizon, "source": source,
+              "points": [], "sampleCount": 0, "mae": None}
+    if station_id not in STATIONS and station_id not in AQM_STATIONS:
+        return {**result, "reason": "station_not_supported"}
+
+    import pandas as pd
+
+    bundle = load_model()
+    cutoff = datetime.fromisoformat(bundle["training_end"])
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=BKK_TZ)
+    start = now.replace(minute=0, second=0, microsecond=0) - timedelta(days=7)
+    earliest = max(start, cutoff.replace(minute=0, second=0, microsecond=0) + (horizon + 1) * HOUR)
+    lookback = earliest - (max(bundle["lags"]) + horizon) * HOUR
+    with database() as conn:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='airbkk_hourly'").fetchone()
+        rows = conn.execute(
+            """SELECT observed_at, pm25 FROM airbkk_hourly
+               WHERE station_id=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at""",
+            (station_id, lookback.isoformat(), now.isoformat()),
+        ).fetchall() if exists else []
+    history = {datetime.fromisoformat(stamp): value for stamp, value in rows}
+    targets = [stamp for stamp in history if stamp >= earliest]
+    if not targets:
+        return {**result, "reason": "no_observations"}
+
+    points = []
+    pairs = []
+    target = min(targets)
+    end = max(targets)
+    while target <= end:
+        issue = target - horizon * HOUR
+        actual = history.get(target)
+        point = {"targetAt": target.isoformat(), "actual": actual, "predicted": None}
+        points.append(point)
+        features = hourly_features(history, issue, bundle["lags"]) if actual is not None and issue > cutoff else None
+        if features is not None:
+            pairs.append((point, features))
+        target += HOUR
+    if not pairs:
+        return {**result, "points": points, "reason": "no_matched_predictions"}
+
+    frame = pd.DataFrame([features for _, features in pairs], columns=bundle["features"])
+    predicted = bundle["models"][horizon].predict(frame)
+    errors = []
+    for (point, _), value in zip(pairs, predicted):
+        point["predicted"] = round(float(value), 2)
+        errors.append(abs(point["predicted"] - point["actual"]))
+    return {**result, "points": points, "sampleCount": len(errors),
+            "mae": round(sum(errors) / len(errors), 2)}
+
+
+def hourly_forecast(station_id, now, *, diagnostics_only=False):
     station_id = station_id.upper()
     if station_id not in STATIONS and station_id not in AQM_STATIONS:
         return {"reason": "station_not_supported", "points": []}
@@ -214,16 +333,22 @@ def hourly_forecast(station_id, now):
 
     with database() as conn:
         table = conn.execute("SELECT 1 FROM sqlite_master WHERE name='airbkk_hourly'").fetchone()
-        rows = conn.execute("""SELECT observed_at, pm25 FROM airbkk_hourly
+        rows = conn.execute("""SELECT observed_at, pm25, fetched_at FROM airbkk_hourly
             WHERE station_id=? AND observed_at<=? ORDER BY observed_at DESC LIMIT 25""",
             (station_id, now.isoformat())).fetchall() if table else []
-    history = {datetime.fromisoformat(stamp): value for stamp, value in rows}
+    history = {datetime.fromisoformat(stamp): value for stamp, value, _ in rows}
     if not history:
         return {"reason": "no_observations", "points": []}
     base = max(history)
     result = {"observedAt": base.isoformat(), "source": "AirBKK" if station_id in STATIONS else "AQMThai", "points": [],
               "experimental": station_id != TRAINING_STATION,
               "latestObservation": {"observedAt": base.isoformat(), "pm25": history[base]}}
+    if diagnostics_only:
+        result["history"] = [
+            {"observedAt": stamp, "pm25": value}
+            for stamp, value, _ in reversed(rows)
+        ]
+        result["lastStoredAt"] = max(fetched for _, _, fetched in rows)
     if now - base >= 2 * HOUR:
         return {**result, "reason": "stale_observations"}
     bundle = load_model()
@@ -231,9 +356,9 @@ def hourly_forecast(station_id, now):
     missing = sorted(stamp.isoformat() for stamp in needed.values() if stamp not in history)
     if missing:
         return {**result, "reason": "missing_hourly_observations", "missingHours": missing}
-    features = {f"lag{lag}": history[stamp] for lag, stamp in needed.items()}
-    angle = base.hour * math.pi / 12
-    features.update(sin=math.sin(angle), cos=math.cos(angle))
+    if diagnostics_only:
+        return {**result, "ready": True}
+    features = hourly_features(history, base, bundle["lags"])
     frame = pd.DataFrame([features], columns=bundle["features"])
     return {**result, "points": [
         {"hoursAhead": h, "targetAt": (base + h * HOUR).isoformat(),

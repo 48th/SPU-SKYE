@@ -91,8 +91,8 @@ export interface ForecastResponse {
 export const THAI_AQI_TIERS: AqiTierMeta[] = [
   {
     tier: "Very Good",
-    color: "#00B0F0",
-    bgTint: "#E0F2FE",
+    color: "#1776A5",
+    bgTint: "#C5E8F8",
     thaiLabel: "คุณภาพอากาศดีมาก",
     englishLabel: "Very Good",
     rangeLabel: "0 to 15.0",
@@ -101,8 +101,8 @@ export const THAI_AQI_TIERS: AqiTierMeta[] = [
   },
   {
     tier: "Good",
-    color: "#22C55E",
-    bgTint: "#DCFCE7",
+    color: "#267B46",
+    bgTint: "#C4EDCF",
     thaiLabel: "คุณภาพอากาศดี",
     englishLabel: "Good",
     rangeLabel: "15.1 to 25.0",
@@ -111,8 +111,8 @@ export const THAI_AQI_TIERS: AqiTierMeta[] = [
   },
   {
     tier: "Moderate",
-    color: "#EAB308",
-    bgTint: "#FEF9C3",
+    color: "#E5BE3C",
+    bgTint: "#F9ECA9",
     thaiLabel: "ปานกลาง",
     englishLabel: "Moderate",
     rangeLabel: "25.1 to 37.5",
@@ -121,8 +121,8 @@ export const THAI_AQI_TIERS: AqiTierMeta[] = [
   },
   {
     tier: "Unhealthy for Sensitive",
-    color: "#F97316",
-    bgTint: "#FFEDD5",
+    color: "#B94D20",
+    bgTint: "#F8D3BA",
     thaiLabel: "เริ่มมีผลกระทบ",
     englishLabel: "Sensitive",
     rangeLabel: "37.6 to 75.0",
@@ -131,8 +131,8 @@ export const THAI_AQI_TIERS: AqiTierMeta[] = [
   },
   {
     tier: "Unhealthy",
-    color: "#EF4444",
-    bgTint: "#FEE2E2",
+    color: "#BE3F50",
+    bgTint: "#F4C3CB",
     thaiLabel: "มีผลกระทบต่อสุขภาพ",
     englishLabel: "Unhealthy",
     rangeLabel: "Above 75.0",
@@ -165,16 +165,7 @@ export function getAqiStatus(pm25: number): AqiStatus {
 }
 
 export function getAqiColor(status: AqiStatus): string {
-  switch (status) {
-    case "Good":
-      return "#10B981";
-    case "Moderate":
-      return "#F59E0B";
-    case "Unhealthy for Sensitive":
-      return "#F97316";
-    case "Unhealthy":
-      return "#EF4444";
-  }
+  return THAI_AQI_TIERS.find(level => level.tier === status)!.color;
 }
 
 

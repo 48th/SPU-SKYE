@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { getThaiAqiMeta, type ThaiAqiTier } from "@/lib/forecastService";
+import { getThaiAqiMeta, THAI_AQI_TIERS, type ThaiAqiTier } from "@/lib/forecastService";
 
 // ── 1. BangkokSkylineBackdrop (Cel-Shaded Toon Style) ───────────────────────
 // Bold dark outlines (#0F172A, strokeWidth=2.5) + flat solid base fills
@@ -209,234 +209,6 @@ export function SentinelCivicCrest({
   );
 }
 
-// ── 3. AirQualityMascot (Cel-Shaded 2D Anime/Comic Character Faces) ────────
-// Thick dark borders (#0F172A, strokeWidth=2.5), flat base fills, and distinct
-// hard-edged cel shadow bands (zero smooth shading or gradients).
-
-export function AirQualityMascot({
-  pm25,
-  tier: forcedTier,
-  size = 48,
-  className = "",
-}: {
-  pm25?: number;
-  tier?: ThaiAqiTier;
-  size?: number;
-  className?: string;
-}) {
-  const meta =
-    forcedTier !== undefined
-      ? getThaiAqiMeta(
-          forcedTier === "Very Good"
-            ? 10
-            : forcedTier === "Good"
-              ? 20
-              : forcedTier === "Moderate"
-                ? 30
-                : forcedTier === "Unhealthy for Sensitive"
-                  ? 50
-                  : 90
-        )
-      : getThaiAqiMeta(pm25 ?? 20);
-
-  const renderToonFace = () => {
-    switch (meta.tier) {
-      case "Very Good":
-        return (
-          <>
-            {/* #00B0F0 base + hard #0284C7 cel shadow band */}
-            <circle cx="24" cy="24" r="20" fill="#00B0F0" stroke="#0F172A" strokeWidth="2.5" />
-            <path
-              d="M36.5 9A19 19 0 0 1 11.5 38.5A18.5 18.5 0 0 0 36.5 9Z"
-              fill="#0284C7"
-            />
-            {/* Top-left toon specular highlight */}
-            <path d="M11 13A14 14 0 0 1 18 8.5" stroke="#BAE6FD" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Rosy anime cheeks */}
-            <ellipse cx="12.5" cy="25.5" rx="3" ry="1.8" fill="#FDA4AF" stroke="#0F172A" strokeWidth="1.4" />
-            <ellipse cx="35.5" cy="25.5" rx="3" ry="1.8" fill="#FDA4AF" stroke="#0F172A" strokeWidth="1.4" />
-            {/* Thick-outlined happy anime laughing eyes */}
-            <path
-              d="M13.5 20.5C14.8 16.5 19.2 16.5 20.5 20.5"
-              stroke="#0F172A"
-              strokeWidth="2.8"
-              strokeLinecap="round"
-            />
-            <path
-              d="M27.5 20.5C28.8 16.5 33.2 16.5 34.5 20.5"
-              stroke="#0F172A"
-              strokeWidth="2.8"
-              strokeLinecap="round"
-            />
-            {/* Anime open laughing mouth with tongue band */}
-            <path
-              d="M15.5 26.5C17 34 31 34 32.5 26.5H15.5Z"
-              fill="#FFFFFF"
-              stroke="#0F172A"
-              strokeWidth="2.5"
-              strokeLinejoin="round"
-            />
-            <path d="M19 30.5C21.5 33 26.5 33 29 30.5C27 29.2 21 29.2 19 30.5Z" fill="#FB7185" />
-          </>
-        );
-
-      case "Good":
-        return (
-          <>
-            {/* #22C55E base + hard #16A34A cel shadow band */}
-            <circle cx="24" cy="24" r="20" fill="#22C55E" stroke="#0F172A" strokeWidth="2.5" />
-            <path
-              d="M36.5 9A19 19 0 0 1 11.5 38.5A18.5 18.5 0 0 0 36.5 9Z"
-              fill="#16A34A"
-            />
-            <path d="M11 13A14 14 0 0 1 18 8.5" stroke="#BBF7D0" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Anime eyes with crisp white gleam */}
-            <circle cx="17" cy="20" r="3" fill="#0F172A" />
-            <circle cx="31" cy="20" r="3" fill="#0F172A" />
-            <circle cx="16" cy="18.8" r="1.1" fill="#FFFFFF" />
-            <circle cx="30" cy="18.8" r="1.1" fill="#FFFFFF" />
-            {/* Rosy cheeks */}
-            <ellipse cx="12.5" cy="25" rx="2.6" ry="1.5" fill="#86EFAC" />
-            <ellipse cx="35.5" cy="25" rx="2.6" ry="1.5" fill="#86EFAC" />
-            {/* Cheerful comic smile */}
-            <path
-              d="M17 27.5C19.8 32 28.2 32 31 27.5"
-              stroke="#0F172A"
-              strokeWidth="2.8"
-              strokeLinecap="round"
-            />
-          </>
-        );
-
-      case "Moderate":
-        return (
-          <>
-            {/* #EAB308 base + hard #CA8A04 cel shadow band */}
-            <circle cx="24" cy="24" r="20" fill="#EAB308" stroke="#0F172A" strokeWidth="2.5" />
-            <path
-              d="M36.5 9A19 19 0 0 1 11.5 38.5A18.5 18.5 0 0 0 36.5 9Z"
-              fill="#CA8A04"
-            />
-            <path d="M11 13A14 14 0 0 1 18 8.5" stroke="#FEF08A" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Calm neutral observant eyes + flat brows */}
-            <path d="M13.5 16H20.5" stroke="#0F172A" strokeWidth="2.4" strokeLinecap="round" />
-            <path d="M27.5 16H34.5" stroke="#0F172A" strokeWidth="2.4" strokeLinecap="round" />
-            <circle cx="17" cy="21" r="2.7" fill="#0F172A" />
-            <circle cx="31" cy="21" r="2.7" fill="#0F172A" />
-            <circle cx="16.2" cy="20" r="0.9" fill="#FFFFFF" />
-            <circle cx="30.2" cy="20" r="0.9" fill="#FFFFFF" />
-            {/* Neutral comic mouth */}
-            <path
-              d="M17.5 29.5H30.5"
-              stroke="#0F172A"
-              strokeWidth="2.8"
-              strokeLinecap="round"
-            />
-          </>
-        );
-
-      case "Unhealthy for Sensitive":
-        return (
-          <>
-            {/* #F97316 base + hard #C2410C cel shadow band */}
-            <circle cx="24" cy="24" r="20" fill="#F97316" stroke="#0F172A" strokeWidth="2.5" />
-            <path
-              d="M36.5 9A19 19 0 0 1 11.5 38.5A18.5 18.5 0 0 0 36.5 9Z"
-              fill="#C2410C"
-            />
-            <path d="M11 13A14 14 0 0 1 18 8.5" stroke="#FED7AA" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Concerned anime eyebrows */}
-            <path d="M13 17.5L20 15" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M35 17.5L28 15" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Eyes */}
-            <circle cx="17" cy="21" r="2.6" fill="#0F172A" />
-            <circle cx="31" cy="21" r="2.6" fill="#0F172A" />
-            <circle cx="16.2" cy="20" r="0.9" fill="#FFFFFF" />
-            <circle cx="30.2" cy="20" r="0.9" fill="#FFFFFF" />
-            {/* Thick-outlined mask straps */}
-            <path d="M5.5 26L12.5 27.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M42.5 26L35.5 27.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M9 36.5L13.5 33.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M39 36.5L34.5 33.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            {/* White N95 mask with sharp comic-book polygon shadow band */}
-            <path
-              d="M12.5 26.5C12.5 24.5 14 23 16 23H32C34 23 35.5 24.5 35.5 26.5V32C35.5 36 30.2 38.5 24 38.5C17.8 38.5 12.5 36 12.5 32V26.5Z"
-              fill="#FFFFFF"
-              stroke="#0F172A"
-              strokeWidth="2.5"
-              strokeLinejoin="round"
-            />
-            {/* Hard-edged comic shadow fold on mask */}
-            <path
-              d="M34 25.5V31.5C34 34.8 29.4 37.2 24 37.2C20.5 37.2 17.4 36.2 15.5 34.6C21 34.6 29.5 32.5 34 25.5Z"
-              fill="#CBD5E1"
-            />
-            <path d="M18 28.5H30" stroke="#0F172A" strokeWidth="1.8" strokeLinecap="round" />
-          </>
-        );
-
-      case "Unhealthy":
-        return (
-          <>
-            {/* #EF4444 base + hard #B91C1C cel shadow band */}
-            <circle cx="24" cy="24" r="20" fill="#EF4444" stroke="#0F172A" strokeWidth="2.5" />
-            <path
-              d="M36.5 9A19 19 0 0 1 11.5 38.5A18.5 18.5 0 0 0 36.5 9Z"
-              fill="#B91C1C"
-            />
-            {/* Furrowed distressed brows & pinched X eyes */}
-            <path d="M13 14.5L20 17" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M35 14.5L28 17" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M14.5 18.5L19.5 22.5M19.5 18.5L14.5 22.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M28.5 18.5L33.5 22.5M33.5 18.5L28.5 22.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Exaggerated cel-shaded sweat drop */}
-            <path
-              d="M37.5 6.5C37.5 6.5 41.5 11.2 41.5 14C41.5 16.2 39.7 18 37.5 18C35.3 18 33.5 16.2 33.5 14C33.5 11.2 37.5 6.5 37.5 6.5Z"
-              fill="#38BDF8"
-              stroke="#0F172A"
-              strokeWidth="2.2"
-              strokeLinejoin="round"
-            />
-            <path d="M37.5 9.5C39.2 12 39.8 14 38.2 16.2" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" />
-            {/* Thick mask straps */}
-            <path d="M5.5 26.5L12.5 27.8" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M42.5 26.5L35.5 27.8" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M9 36.5L13.5 33.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M39 36.5L34.5 33.5" stroke="#0F172A" strokeWidth="2.5" strokeLinecap="round" />
-            {/* Thick-outlined N95 mask + hard shadow fold */}
-            <path
-              d="M12.5 26.5C12.5 24.5 14 23 16 23H32C34 23 35.5 24.5 35.5 26.5V32C35.5 36 30.2 38.5 24 38.5C17.8 38.5 12.5 36 12.5 32V26.5Z"
-              fill="#FFFFFF"
-              stroke="#0F172A"
-              strokeWidth="2.5"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M34 25.5V31.5C34 34.8 29.4 37.2 24 37.2C20.5 37.2 17.4 36.2 15.5 34.6C21 34.6 29.5 32.5 34 25.5Z"
-              fill="#CBD5E1"
-            />
-            <path d="M18 28.5H30" stroke="#0F172A" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M20 32.5H28" stroke="#0F172A" strokeWidth="1.8" strokeLinecap="round" />
-          </>
-        );
-    }
-  };
-
-  return (
-    <div
-      className={`bg-white rounded-full inline-flex items-center justify-center shrink-0 p-0.5 border-2 border-slate-900 ${className}`}
-      style={{ width: size, height: size }}
-      aria-hidden="true"
-    >
-      <svg width="100%" height="100%" viewBox="0 0 48 48" fill="none">
-        {renderToonFace()}
-      </svg>
-    </div>
-  );
-}
-
-// ── 4. TabIllustrationBadges (Cel-Shaded Comic Icons) ──────────────────────
-
 export function NearbyStationBadge({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -508,5 +280,35 @@ export function MiniWindIcon({ size = 14 }: { size?: number }) {
         strokeLinecap="round"
       />
     </svg>
+  );
+}
+
+const expressionFaces = {
+  "Very Good": { ink: "#084C74", eyes: "M10 14q2-3 4 0m6 0q2-3 4 0", mouth: "M11 20q6 9 12 0Z" },
+  Good: { ink: "#15552C", eyes: "M12 14h.01m10 0h.01", mouth: "M12 20q5 5 10 0" },
+  Moderate: { ink: "#684306", eyes: "M12 14h.01m10 0h.01", mouth: "M13 21h8" },
+  "Unhealthy for Sensitive": { ink: "#792C10", eyes: "M12 15h.01m10 0h.01", mouth: "M12 23q5-5 10 0", brows: "M10 11l4-2m6 0 4 2" },
+  Unhealthy: { ink: "#821A31", eyes: "M10 14l4 2m6 0 4-2", mouth: "M13 24q4-7 8 0Z", brows: "M10 10l4 2m6 0 4-2" },
+} satisfies Record<string, { ink: string; eyes: string; mouth: string; brows?: string }>;
+
+export function getAirQualityExpression(pm25?: number | null, tier?: ThaiAqiTier) {
+  const level = tier ?? (typeof pm25 === "number" && Number.isFinite(pm25) ? getThaiAqiMeta(pm25).tier : undefined);
+  if (!level) return { image: null };
+  const face: { ink: string; eyes: string; mouth: string; brows?: string } = expressionFaces[level];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 34 34" fill="none" stroke="${face.ink}" stroke-linecap="round" stroke-linejoin="round"><path d="${face.eyes}" stroke-width="2.5"/><path d="${face.mouth}" stroke-width="1.8"/>${face.brows ? `<path d="${face.brows}" stroke-width="1.4"/>` : ""}</svg>`;
+  return { tint: THAI_AQI_TIERS.find(item => item.tier === level)!.bgTint, image: "data:image/svg+xml," + encodeURIComponent(svg) };
+}
+
+export function AirQualityExpression({ pm25, tier, className = "h-9 w-9" }: {
+  pm25?: number | null;
+  tier?: ThaiAqiTier;
+  className?: string;
+}) {
+  const face = getAirQualityExpression(pm25, tier);
+  return (
+    <span aria-hidden="true" className={"grid shrink-0 place-items-center rounded-full text-neutral-600 ring-1 ring-inset ring-black/5 " + className}
+      style={{ backgroundColor: face.tint }}>
+      {face.image ? <img alt="" src={face.image} className="h-4/5 w-4/5" /> : "–"}
+    </span>
   );
 }

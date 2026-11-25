@@ -8,8 +8,10 @@ import type * as Leaflet from "leaflet";
 import "leaflet/dist/leaflet.css";
 import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
 import { point } from "@turf/helpers";
-import { ArrowClockwise, Heart, MagnifyingGlass, NavigationArrow,
-  Smiley, SmileyWink, SmileyMeh, SmileySad, SmileyXEyes, Tree, X } from "@phosphor-icons/react";
+import { ArrowClockwise, Bus, Car, Heart, MagnifyingGlass, NavigationArrow,
+  Tree, X } from "@phosphor-icons/react";
+import { AirQualityExpression } from "@/components/CivicIllustrationAssets";
+import { getThaiAqiMeta } from "@/lib/forecastService";
 
 type Station = { id: string; name: string; district: string; lat: number; lng: number; pm25: number | null; observedAt?: string; isStale?: boolean };
 type Park = { id: string; name: string; district: string; lat: number; lng: number; imageUrl?: string | null; description?: string };
@@ -27,30 +29,15 @@ const FAVORITES_KEY = "spu-skye:favorite-parks";
 const clean = (s: string) => String(s ?? "").replace(/^เขต/, "").trim();
 
 
-const pm25Levels = [
-  { max: 15, color: "#7BC9A4", icon: SmileyWink, label: "ดีมาก" },
-  { max: 25, color: "#ACD99A", icon: Smiley, label: "ดี" },
-  { max: 37.5, color: "#F4D98B", icon: SmileyMeh, label: "ปานกลาง" },
-  { max: 75, color: "#F3B48C", icon: SmileySad, label: "เริ่มมีผลกระทบ" },
-  { max: Infinity, color: "#E99A9D", icon: SmileyXEyes, label: "มีผลกระทบ" },
-];
-
-function pm25Level(value: number | null) {
-  return value == null || !Number.isFinite(value) ? undefined : pm25Levels.find(level => value <= level.max);
-}
-
-const color = (value: number | null) => pm25Level(value)?.color ?? "#DDE3E8";
+const color = (value: number | null) => getThaiAqiMeta(value ?? NaN).color;
 
 function ParkAirMood({ value }: { value: number | null }) {
-  const level = pm25Level(value);
+  const level = value == null || !Number.isFinite(value) ? undefined : getThaiAqiMeta(value);
   if (!level) return null;
-  const Icon = level.icon;
   return (
     <span className="ml-auto flex shrink-0 flex-col items-center gap-1 text-[11px] font-semibold text-slate-800">
-      <span className="grid h-10 w-10 place-items-center rounded-full" style={{ backgroundColor: level.color }}>
-        <Icon size={26} weight="bold" aria-hidden />
-      </span>
-      {level.label}
+      <AirQualityExpression pm25={value} className="h-10 w-10" />
+      {level.thaiLabel}
     </span>
   );
 }
@@ -650,8 +637,8 @@ export default function ParkAirQuality({ stations, lang = "TH" }: Props) {
               ? "#E4E9ED"
               : color(pm25),
 
-            // สีสม่ำเสมอ ไม่ซีดเกินไป
-            fillOpacity: showAirLayer ? (isSelected ? 0.68 : isDimmed ? 0.18 : 0.52) : 0,
+            // Keep roads and place names visible under the air quality layer.
+            fillOpacity: showAirLayer ? (isSelected ? 0.3 : isDimmed ? 0.1 : 0.24) : 0,
             // เส้นแบ่งเขตบาง ๆ แบบ Minimal
             stroke: true,
             color: isSelected ? "#00796B" : "#64748B",
@@ -847,10 +834,10 @@ for (const p of visible) {
   };
 
 
-  return <section id="main-content" className="bangkok-ui-font mx-auto max-w-[1440px] space-y-4 px-3 py-4 sm:space-y-5 sm:px-6 sm:py-7 lg:px-7">
+  return <section id="main-content" className="bangkok-ui-font mx-auto max-w-[1440px] space-y-4 px-3 pb-4 pt-1 sm:space-y-5 sm:px-6 sm:py-7 lg:px-7">
     <style>{`
       .parks-layout {
-        --park-map-height: clamp(295px, 51dvh, 460px);
+        --park-map-height: clamp(340px, 63dvh, 590px);
       }
       .parks-layout .park-air-map {
         height: var(--park-map-height);
@@ -887,33 +874,36 @@ for (const p of visible) {
       }
     `}</style>
     
-<header className="relative z-[1100] flex flex-wrap items-center justify-between gap-3 px-1">
-  <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-  <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#005A50] text-white sm:h-14 sm:w-14">
-    <Tree size={29} weight="fill" aria-hidden />
-  </span>
-  <div>
-    <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 sm:text-[2.15rem]">
-      {lang === "TH" ? "สำรวจสวนกรุงเทพฯ" : "Explore Bangkok parks"}
-    </h1>
-    <p className="mt-1 text-sm text-slate-600">
-      {lang === "TH" ? "ค้นหาสวนและดูค่าฝุ่นจากสถานีใกล้เคียง" : "Find parks and check nearby PM2.5 readings"}
-    </p>
+<h1 className="sr-only">{lang === "TH" ? "สำรวจสวนกรุงเทพฯ" : "Explore Bangkok parks"}</h1>
+
+
+
+{error && (
+  <div
+    role="alert"
+    className="flex items-start gap-3 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-sm text-red-700"
+  >
+    <span className="text-lg">⚠️</span>
+    <p className="min-w-0 flex-1">{error}</p>
   </div>
-  </div>
-  <details ref={favoritesPanel} className="relative">
+)}
+
+
+    <div className="parks-layout isolate grid overflow-hidden rounded-[1.25rem] border border-[#d9e5df] bg-white shadow-[0_8px_30px_#254a3610] sm:rounded-[1.5rem]">
+      <div className="relative min-w-0 overflow-hidden">
+  <details ref={favoritesPanel} className="absolute right-3 top-[4.4rem] z-[1100]">
     <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-[#d9e5df] bg-white px-3 py-2 text-sm font-semibold text-[#005A50] shadow-sm hover:bg-emerald-50 [&::-webkit-details-marker]:hidden">
       <Heart size={18} weight={favoriteParks.length ? "fill" : "regular"} aria-hidden />
       สวนที่ชื่นชอบ
       {favoriteParks.length > 0 && <span className="tabular-nums">{favoriteParks.length}</span>}
     </summary>
-    <div className="absolute left-0 top-full mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-[#d9e5df] bg-white p-3 shadow-xl sm:left-auto sm:right-0">
+    <div className="absolute right-0 top-full mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-[#d9e5df] bg-white p-3 shadow-xl">
       {!favoriteParks.length ? (
         <p className="p-2 text-sm text-slate-600">
           {!favoritesReady || favoriteIds.length ? "กำลังโหลดสวนที่บันทึกไว้" : "กดหัวใจที่สวนเพื่อบันทึกไว้ที่นี่"}
         </p>
       ) : (
-        <ul className="max-h-[50dvh] divide-y divide-slate-100 overflow-auto">
+        <ul className="max-h-[38dvh] divide-y divide-slate-100 overflow-auto">
           {favoriteParks.map(item => (
             <li key={item.id} className="flex items-center gap-2 py-1">
               <button type="button" className="min-w-0 flex-1 rounded-lg p-2 text-left hover:bg-emerald-50"
@@ -941,22 +931,7 @@ for (const p of visible) {
       </p>}
     </div>
   </details>
-</header>
 
-
-{error && (
-  <div
-    role="alert"
-    className="flex items-start gap-3 rounded-2xl border border-red-100 bg-red-50 px-5 py-4 text-sm text-red-700"
-  >
-    <span className="text-lg">⚠️</span>
-    <p className="min-w-0 flex-1">{error}</p>
-  </div>
-)}
-
-
-    <div className="parks-layout grid overflow-hidden rounded-[1.25rem] border border-[#d9e5df] bg-white shadow-[0_8px_30px_#254a3610] sm:rounded-[1.5rem]">
-      <div className="relative min-w-0 overflow-hidden">
 
         <div className="absolute left-[3.25rem] right-[3.85rem] top-3 z-[1000] flex min-w-0 gap-1 rounded-2xl bg-white/95 p-1 shadow-md backdrop-blur sm:right-auto sm:w-[min(20rem,calc(100%_-_8rem))] sm:gap-2">
           <select
@@ -1170,7 +1145,7 @@ for (const p of visible) {
                   </time>}
                 </span>
                 {reference && <span className="shrink-0 rounded-lg px-2 py-1 text-xs font-bold tabular-nums text-slate-950"
-                    style={{ backgroundColor: color(reference.station.pm25) }}>
+                    style={{ backgroundColor: getThaiAqiMeta(reference.station.pm25 ?? NaN).bgTint }}>
                   {reference.station.pm25?.toFixed(1)} µg/m³
                 </span>}
                 </span>
@@ -1331,14 +1306,14 @@ for (const p of visible) {
       )}
 
       {nearest ? (
-        <div className="rounded-2xl bg-emerald-50 p-4">
-          <p className="text-xs font-medium text-emerald-800">
+        <div className="rounded-2xl border p-4" style={{ backgroundColor: "color-mix(in srgb, " + getThaiAqiMeta(nearest.station.pm25 ?? NaN).bgTint + " 64%, white)", borderColor: color(nearest.station.pm25) + "40" }}>
+          <p className="text-xs font-medium text-slate-800">
             PM2.5 จากสถานีใกล้สวน
           </p>
           <div className="mt-2 flex items-center gap-2">
             <div className="flex flex-wrap items-baseline gap-2">
-              <span className="text-3xl font-bold tabular-nums text-emerald-950">{nearest.station.pm25?.toFixed(1)}</span>
-              <span className="text-sm text-emerald-900">µg/m³</span>
+              <span className="text-3xl font-bold tabular-nums text-slate-950">{nearest.station.pm25?.toFixed(1)}</span>
+              <span className="text-sm text-slate-900">µg/m³</span>
             </div>
             <ParkAirMood value={nearest.station.pm25} />
           </div>
@@ -1367,7 +1342,7 @@ for (const p of visible) {
                 <span className="font-semibold tabular-nums">{point.pm25?.toFixed(1) ?? "—"}</span>
                 <span className="mt-1 flex h-14 w-full max-w-7 items-end rounded-sm bg-slate-100" aria-hidden>
                   {point.pm25 != null && <span className="w-full rounded-sm"
-                    style={{ height: Math.max(2, point.pm25 / historyMax * 100) + "%", backgroundColor: color(point.pm25) }} />}
+                    style={{ height: Math.max(2, point.pm25 / historyMax * 100) + "%", backgroundColor: "color-mix(in srgb, " + color(point.pm25) + " 74%, white)" }} />}
                 </span>
                 <time className="mt-1 tabular-nums" dateTime={point.date}>{point.date.slice(8)}/{point.date.slice(5, 7)}</time>
               </li>
@@ -1376,8 +1351,35 @@ for (const p of visible) {
         </figure>
       )}
 
+      {Number.isFinite(park.lat) && Number.isFinite(park.lng) && (
+        <section aria-label={lang === "TH" ? "การเดินทางไปสวน" : "Directions to the park"}
+          className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5 px-1">
+            <h3 className="text-sm font-bold text-slate-900">{lang === "TH" ? "การเดินทางไปสวน" : "Directions to the park"}</h3>
+            <span className="text-xs font-medium text-slate-600">Google Maps <span aria-hidden="true">↗</span></span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { mode: "driving", label: lang === "TH" ? "ขับรถ" : "Driving", Icon: Car },
+              { mode: "transit", label: lang === "TH" ? "รถสาธารณะ" : "Public transit", Icon: Bus },
+            ] as const).map(({ mode, label, Icon }) => (
+              <a key={mode}
+                href={"https://www.google.com/maps/dir/?" + new URLSearchParams({
+                  api: "1",
+                  destination: `${park.lat},${park.lng}`,
+                  travelmode: mode,
+                })}
+                className="flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-emerald-900/15 bg-white px-2 py-2 text-center text-sm font-semibold text-[#005A50] hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
+                <Icon size={20} className="shrink-0" aria-hidden="true" />
+                <span>{label}</span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
       <details className="rounded-xl border border-slate-200 p-3">
-        <summary className="cursor-pointer text-sm font-semibold text-[#005A50]">เส้นทางขับรถ</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-[#005A50]">{lang === "TH" ? "คำนวณระยะขับรถในเว็บ" : "Estimate driving distance here"}</summary>
 
         {roadRoute && (
           <div className="mt-2">
@@ -1470,7 +1472,7 @@ for (const p of visible) {
                 {parkButton(first)}
               </div>
               <span className="shrink-0 rounded-lg px-2 py-1 text-sm font-bold tabular-nums text-slate-950"
-                style={{ background: color(station.pm25) }}>
+                style={{ backgroundColor: getThaiAqiMeta(station.pm25 ?? NaN).bgTint }}>
                 {station.pm25?.toFixed(1)} µg/m³
               </span>
             </div>
