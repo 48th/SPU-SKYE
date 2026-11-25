@@ -2,14 +2,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import { X, ArrowClockwise } from "@phosphor-icons/react";
 import { AirQualityExpression } from "@/components/CivicIllustrationAssets";
-import { getThaiAqiMeta, formatReading, formatObservedAt, type DistrictStation, type ForecastHorizon, type ForecastResponse, type FetchStatus } from "@/lib/forecastService";
-export type DrawerSection = "all" | "hourly" | "shap";
+import { getThaiAqiMeta, formatReading, formatObservedAt, type DistrictStation, type ForecastResponse } from "@/lib/forecastService";
+export type DrawerSection = "all" | "hourly";
 interface Props {
- isOpen: boolean; station: DistrictStation | null; lang: "TH" | "EN";
- horizon: ForecastHorizon; focusSection: DrawerSection; status: FetchStatus;
- data: ForecastResponse | null; error: string | null; onClose: () => void;
- onHorizonChange: (h: ForecastHorizon) => void; onRefresh: () => void;
- onLoadFallback: () => void;
+ isOpen: boolean;
+ station: DistrictStation | null;
+ lang: "TH" | "EN";
+ focusSection: DrawerSection;
+ selectionRevision: number;
+ data: ForecastResponse | null;
+ onClose: () => void;
+ onRefresh: () => void;
 }
 const stationApi = (process.env.NEXT_PUBLIC_STATION_API_URL || "http://127.0.0.1:8001").replace(/\/+$/, "");
 type HourlyForecast = {
@@ -34,10 +37,9 @@ const hourlyReasons: Record<string, [string, string]> = {
   station_not_supported: ["สถานีนี้ยังไม่รองรับพยากรณ์รายชั่วโมง", "Hourly forecasts are unavailable for this station"],
   model_unavailable: ["โมเดลรายชั่วโมงยังไม่พร้อม", "Hourly model is unavailable"],
 };
-export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSection,data,onClose,onRefresh}: Props) {
- const closeRef = useRef<HTMLButtonElement>(null);
+export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSection,selectionRevision,data,onClose,onRefresh}: Props) {
+ const detailRef = useRef<HTMLElement>(null);
  const forecastRef = useRef<HTMLElement>(null);
- const shapRef = useRef<HTMLElement>(null);
  const [revision, setRevision] = useState(0);
  const [showChart, setShowChart] = useState(false);
  const [result, setResult] = useState<{ id: string; forecast?: HourlyForecast; failed?: boolean }>();
@@ -71,29 +73,11 @@ export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSectio
  }, [stationId, revision]);
 
  useEffect(() => {
-   if (isOpen && focusSection === "hourly") forecastRef.current?.scrollIntoView({ block: "start" });
-   if (isOpen && focusSection === "shap") shapRef.current?.scrollIntoView({ block: "start" });
- }, [isOpen, focusSection]);
+   if (!stationId) return;
+   const target = focusSection === "hourly" ? forecastRef.current : detailRef.current;
+   target?.scrollIntoView({ block: "nearest", behavior: "instant" });
+ }, [stationId, focusSection, selectionRevision]);
 
- useEffect(() => {
-   if (!isOpen) return;
-   const previous = document.activeElement as HTMLElement | null;
-   const overflow = document.body.style.overflow;
-   document.body.style.overflow = "hidden";
-   closeRef.current?.focus();
-   const keydown = (event: KeyboardEvent) => {
-     if (event.key === "Escape") onClose();
-     if (event.key === "Tab") {
-       const buttons = closeRef.current?.closest("aside")?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href], [tabindex=\"0\"]");
-       if (!buttons?.length) return;
-       const first = buttons[0], last = buttons[buttons.length - 1];
-       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-     }
-   };
-   window.addEventListener("keydown", keydown);
-   return () => {window.removeEventListener("keydown",keydown); document.body.style.overflow=overflow; previous?.focus();};
- }, [isOpen,onClose]);
  if (!isOpen || !station?.id) return null;
  const th = lang === "TH";
  const hasFeedReading = Number.isFinite(station.currentPM25);
@@ -117,13 +101,13 @@ export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSectio
    const midpoint = (previous.x + x) / 2;
    return `C ${midpoint} ${previous.y}, ${midpoint} ${y}, ${x} ${y}`;
  }).join(" ");
- return <div className="fixed inset-0 z-50 flex justify-end bg-neutral-950/25" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-  <aside role="dialog" aria-modal="true" aria-labelledby="station-detail-title" className="w-full max-w-2xl bg-white/60 bg-gradient-to-br from-white/95 via-neutral-50/85 to-neutral-200/85 sm:m-4 sm:rounded-[2rem] border border-white/80 flex flex-col overflow-hidden text-neutral-900 shadow-2xl backdrop-blur-xl">
-   <header className="relative z-10 shrink-0 p-4 sm:p-5 bg-white/85 backdrop-blur-xl border-b border-neutral-300/60 flex items-start justify-between gap-3">
+ return (
+  <section ref={detailRef} aria-labelledby="station-detail-title"
+    className="scroll-mt-4 overflow-hidden rounded-2xl border border-neutral-300/70 bg-gradient-to-br from-white via-neutral-50 to-neutral-200/80 text-neutral-900 shadow-sm">
+   <header className="border-b border-neutral-300/60 bg-white/85 p-4 sm:p-5 flex items-start justify-between gap-3">
     <div><h2 id="station-detail-title" className="text-xl font-bold">{station.nameTh}</h2><p className="mt-1 text-sm text-neutral-600">{station.stationTh} · {station.id}</p></div>
-    <button ref={closeRef} type="button" onClick={onClose} aria-label={th?"ปิด":"Close"} className="shrink-0 rounded-full border border-neutral-300/70 bg-white/60 p-2.5 hover:bg-white"><X size={22}/></button>
+    <button type="button" onClick={onClose} aria-label={th ? "ซ่อนรายละเอียดสถานี" : "Hide station details"} className="shrink-0 rounded-full border border-neutral-300/70 bg-white/60 p-2.5 hover:bg-white"><X size={22} aria-hidden /></button>
    </header>
-   <div tabIndex={0} role="region" aria-label={th ? "ข้อมูลสถานีและพยากรณ์" : "Station details and forecast"} className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-b-[inherit] [scrollbar-width:thin] [scrollbar-color:#a3a3a399_transparent] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-neutral-400">
    <div className="p-4 sm:p-5 flex flex-col gap-4">
     <section className="rounded-3xl border px-4 py-4 sm:px-5 shadow-sm" style={{ backgroundColor: readingTier.bgTint, borderColor: readingTier.color + "99" }}>
      <p className="text-sm font-medium text-neutral-700">{th?"ค่าฝุ่นล่าสุดที่สถานีรายงาน":"Latest station PM2.5"}</p>
@@ -151,19 +135,6 @@ export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSectio
       <h3 className="font-bold">{th ? "พยากรณ์ค่าเฉลี่ยวันพรุ่งนี้" : "Tomorrow’s average PM2.5 forecast"}</h3>
       <p className="mt-1 text-2xl font-bold tabular-nums">{formatReading(data.tomorrow.pm25)} <span className="text-sm font-normal">µg/m³</span></p>
       <p className="mt-1 text-xs text-neutral-600">{data.tomorrow.date} · {data.modelName}</p>
-     </section>
-    )}
-    {focusSection === "shap" && (
-     <section ref={shapRef} className="scroll-mt-4 rounded-3xl border border-white/80 bg-white/75 p-4 shadow-sm">
-      <h3 className="font-bold">{th ? "วิเคราะห์ปัจจัย SHAP" : "SHAP analysis"}</h3>
-      {data?.district.toLowerCase() === station.id.toLowerCase() && data.shap.length > 0 ? (
-       <ul className="mt-3 divide-y divide-neutral-200 text-sm">
-        {data.shap.map(item => <li key={item.feature} className="flex justify-between gap-3 py-2">
-         <span>{th ? item.featureTh : item.feature}</span>
-         <span className="font-semibold tabular-nums">{item.value > 0 ? "+" : ""}{formatReading(item.value, 2)} {item.unit}</span>
-        </li>)}
-       </ul>
-      ) : <p className="mt-2 text-sm text-neutral-600">{th ? "บริการพยากรณ์ยังไม่มีค่า SHAP สำหรับสถานีนี้" : "SHAP values are unavailable for this station."}</p>}
      </section>
     )}
     <section ref={forecastRef} className="scroll-mt-4 rounded-3xl border border-white/80 bg-white/60 p-4 shadow-sm"
@@ -238,7 +209,6 @@ export default function DistrictAnalyticsDrawer({isOpen,station,lang,focusSectio
     </a>
     <button type="button" onClick={() => { onRefresh(); setRevision(value => value + 1); }} className="inline-flex items-center justify-center gap-2 p-3 rounded-2xl border border-white/80 bg-white/60 hover:bg-white"><ArrowClockwise size={18}/>{th?"รีเฟรชข้อมูลสถานี":"Refresh stations"}</button>
    </div>
-   </div>
-  </aside>
- </div>;
+  </section>
+ );
 }

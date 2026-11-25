@@ -4,7 +4,6 @@ __pycache__/
 node_modules/
 daily_inbox/
 station_pm25.sqlite3*
-!docker-seed/station_pm25.sqlite3
 AQMThai-daily-11-stations/
 AQMThai-daily-update/
 station_extra_trees_sklearn_1_9_1.joblib

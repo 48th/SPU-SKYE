@@ -1,5 +1,6 @@
 """Station daily PM2.5 storage, backtest and next-calendar-day inference."""
 import argparse
+import csv
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 import json
@@ -12,6 +13,7 @@ import sqlite3
 from live_data import BKK_TZ, get_live_snapshot
 
 ROOT = Path(__file__).resolve().parent
+AIRBKK_DAILY_ARCHIVE = ROOT / "airbkk-daily-2026-11-09-to-22.csv"
 DB_PATH = Path(os.getenv("PM25_STATION_DB", ROOT / "station_pm25.sqlite3"))
 BUNDLE_PATH = Path(os.getenv("PM25_STATION_MODEL_PATH", ROOT / "models/station_extra_trees.joblib"))
 SCHEMA = "bangkok_station_daily_pm25_v1"
@@ -35,6 +37,17 @@ def database():
                 averaging_period TEXT NOT NULL, station_name TEXT NOT NULL,
                 PRIMARY KEY(station_id, observed_at)
             );
+            CREATE TABLE IF NOT EXISTS airbkk_hourly (
+                station_id TEXT NOT NULL, observed_at TEXT NOT NULL,
+                pm25 REAL NOT NULL, fetched_at TEXT NOT NULL,
+                PRIMARY KEY(station_id, observed_at)
+            );
+            CREATE TABLE IF NOT EXISTS hourly_forecast_issuance (
+                station_id TEXT NOT NULL, base_at TEXT NOT NULL,
+                horizon INTEGER NOT NULL, target_at TEXT NOT NULL, issued_at TEXT NOT NULL,
+                predicted REAL NOT NULL, persistence REAL NOT NULL, model_file TEXT NOT NULL,
+                PRIMARY KEY(station_id, base_at, horizon)
+            );
             CREATE TABLE IF NOT EXISTS station_daily (
                 station_id TEXT NOT NULL, day TEXT NOT NULL, pm25 REAL NOT NULL,
                 imported_at TEXT NOT NULL, source TEXT NOT NULL,
@@ -45,6 +58,26 @@ def database():
             yield conn
     finally:
         conn.close()
+
+
+def initialize_database():
+    now = datetime.now(BKK_TZ)
+    rows = []
+    if AIRBKK_DAILY_ARCHIVE.is_file():
+        with AIRBKK_DAILY_ARCHIVE.open(encoding="utf-8-sig", newline="") as source:
+            for row in csv.DictReader(source):
+                day = date.fromisoformat(row["date"])
+                station = row["station_id"].strip().upper()
+                value = float(row["pm25"])
+                if not station or not math.isfinite(value) or value < 0:
+                    raise ValueError(f"Invalid archived PM2.5 for {station} on {day}")
+                if day < now.date():
+                    rows.append((station, day.isoformat(), value, now.isoformat(), row["source"]))
+    with database() as conn:
+        result = conn.executemany(
+            "INSERT OR IGNORE INTO station_daily VALUES (?, ?, ?, ?, ?)", rows
+        )
+        return result.rowcount
 
 
 def store_snapshot(snapshot):

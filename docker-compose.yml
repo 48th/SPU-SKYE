@@ -1,3 +1,5 @@
+name: spu-skye-new
+
 services:
   backend:
     build:
@@ -21,6 +23,7 @@ services:
       PM25_AQMTHAI_DAILY: "1"
       PM25_NODE: /usr/bin/node
       PM25_CHROMIUM_PATH: /usr/bin/chromium
+      SPU_ADMIN_API_KEY: "${SPU_ADMIN_API_KEY:-}"
       PM25_STATION_DB: /data/station_pm25.sqlite3
       PM25_STATION_MODEL_PATH: /app/models/station_extra_trees_bangkok_59.joblib
       PM25_HOURLY_MODEL_PATH: "/app/models/${PM25_HOURLY_MODEL_FILE:-BKP102T-hourly-extra-trees.joblib}"
@@ -35,6 +38,12 @@ services:
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8000
         NEXT_PUBLIC_STATION_API_URL: http://127.0.0.1:8001
+    environment:
+      AIR_QUALITY_BACKEND_URL: http://backend:8000
+      SPU_STATION_INTERNAL_URL: http://station-backend:8001
+      SPU_ADMIN_USER: "${SPU_ADMIN_USER:-}"
+      SPU_ADMIN_PASSWORD: "${SPU_ADMIN_PASSWORD:-}"
+      SPU_ADMIN_API_KEY: "${SPU_ADMIN_API_KEY:-}"
     container_name: spu-skye-frontend
     ports:
       - "127.0.0.1:3000:80"

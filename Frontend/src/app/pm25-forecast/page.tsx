@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Heart, NavigationArrow } from "@phosphor-icons/react";
+import { Heart, NavigationArrow, Tree } from "@phosphor-icons/react";
 import { useStationFavorites } from "@/lib/stationFavorites";
 import { AirQualityExpression } from "@/components/CivicIllustrationAssets";
 import { formatObservedAt, formatReading, getThaiAqiMeta } from "@/lib/forecastService";
@@ -52,6 +52,31 @@ async function read<T>(path: string, signal: AbortSignal): Promise<T> {
   return response.json();
 }
 
+function HourlyPoints({ points, label }: { points: Hourly["points"]; label: string }) {
+  return (
+    <div tabIndex={0} role="region" aria-label={label}
+      className="mt-2 overflow-x-auto rounded-2xl bg-slate-100/80 [scrollbar-width:thin] focus-visible:outline-emerald-700">
+      <ol className="flex w-max min-w-full divide-x divide-slate-200 px-1 py-3">
+        {points.map(point => {
+          const target = new Date(point.targetAt);
+          return (
+            <li key={point.hoursAhead} className="grid min-w-[4.8rem] flex-1 justify-items-center gap-1 px-2">
+              <time dateTime={point.targetAt} title={formatObservedAt(point.targetAt)}
+                className="grid text-center text-xs font-semibold tabular-nums">
+                <span className="font-normal text-slate-600">{day.format(target)}</span>
+                <span>{clock.format(target)}</span>
+              </time>
+              <AirQualityExpression pm25={point.predictedPM25} />
+              <span className="text-lg font-bold tabular-nums">{formatReading(point.predictedPM25)}</span>
+              <span className="sr-only">{getThaiAqiMeta(point.predictedPM25).thaiLabel}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 export default function PM25ForecastPage() {
   const [stations, setStations] = useState<Station[]>([]);
   const [id, setId] = useState("");
@@ -60,11 +85,22 @@ export default function PM25ForecastPage() {
   const [horizon, setHorizon] = useState(1);
   const [comparison, setComparison] = useState<{ id: string; horizon: number; revision: number; result: HourlyComparison | null }>();
   const [revision, setRevision] = useState(0);
+  const [now, setNow] = useState(Date.now);
   const { ids: favorites, toggle: toggleFavorite } = useStationFavorites();
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [locationStatus, setLocationStatus] = useState("");
   const [locating, setLocating] = useState(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const updateClock = () => setNow(Date.now());
+    const timer = window.setInterval(updateClock, 1000);
+    document.addEventListener("visibilitychange", updateClock);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", updateClock);
+    };
+  }, []);
 
   useEffect(() => {
     if (!locationStatus) return;
@@ -111,7 +147,7 @@ export default function PM25ForecastPage() {
       await Promise.all([
         read<{ hourlyForecast: Hourly }>(stationPath + "/forecast/hourly", controller.signal)
           .then(result => update({ hourly: result.hourlyForecast })).catch(() => update({ hourly: null })),
-        read<Daily>("/api/v1/forecast?diagnostics=true&station_id=" + encodeURIComponent(id), controller.signal)
+        read<Daily>("/api/v1/forecast?station_id=" + encodeURIComponent(id), controller.signal)
           .then(daily => update({ daily })).catch(() => update({ daily: null })),
         read<{ points: DailyReading[] }>(stationPath + "/history/daily?include_hourly=true", controller.signal)
           .then(result => update({ history: result.points })).catch(() => update({ history: null })),
@@ -186,6 +222,9 @@ export default function PM25ForecastPage() {
   const selected = detail?.id === id ? detail : undefined;
   const hourly = selected?.hourly;
   const modelBase = hourly?.latestObservation;
+  const hourlyPoints = [...(hourly?.points ?? [])].sort((a, b) => a.hoursAhead - b.hoursAhead);
+  const upcomingPoints = hourlyPoints.filter(point => Date.parse(point.targetAt) > now);
+  const elapsedPoints = hourlyPoints.filter(point => Date.parse(point.targetAt) <= now);
   const comparisonResult = comparison?.id === id && comparison.horizon === horizon && comparison.revision === revision
     ? comparison.result : undefined;
   const matchedPoints = comparisonResult?.points.flatMap(point =>
@@ -211,7 +250,13 @@ export default function PM25ForecastPage() {
       style={{ backgroundImage: "linear-gradient(180deg, " + backgroundTop + " 30%, " + backgroundBottom + " 100%)" }}>
       <div className="mx-auto max-w-4xl space-y-4">
         <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <Link href="/map" className="hidden sm:inline-flex min-h-11 items-center rounded-full border border-white bg-white/80 px-4 text-sm font-semibold shadow-sm">← แผนที่คุณภาพอากาศ</Link>
+          <nav aria-label="เมนูหลัก" className="hidden flex-wrap items-center gap-2 sm:flex">
+            <Link href="/map" className="inline-flex min-h-11 items-center rounded-full border border-white bg-white/80 px-4 text-sm font-semibold shadow-sm">← แผนที่คุณภาพอากาศ</Link>
+            <Link href="/parks" className="inline-flex min-h-11 items-center gap-2 rounded-full border border-white bg-white/80 px-4 text-sm font-semibold shadow-sm hover:bg-white focus-visible:outline-emerald-700">
+              <Tree size={18} aria-hidden="true" />
+              สวนสาธารณะ
+            </Link>
+          </nav>
           <span className="text-sm font-bold tracking-wide text-slate-700">SPU SKYE</span>
         </header>
 
@@ -300,25 +345,37 @@ export default function PM25ForecastPage() {
         {station && <>
           <section className={panel + " p-4 sm:p-6"} aria-labelledby="pm25-hourly">
             <h2 id="pm25-hourly" className="text-lg font-bold">พยากรณ์ 1–6 ชั่วโมง</h2>
-            <p className="mt-1 text-xs text-slate-600">PM2.5 (µg/m³){hourly?.observedAt && (" · " + hourly.source + " · ฐานเวลา " + formatObservedAt(hourly.observedAt))}{hourly?.points.length ? " · Extra Trees" : ""}{hourly?.experimental && hourly.points.length ? " · ผลทดลอง" : ""}</p>
-            {modelBase && !!hourly?.points.length && (
-              <p className="mt-2 text-sm font-medium text-slate-700">
-                ค่าฝุ่นรายชั่วโมงที่โมเดลใช้เป็นฐาน {formatReading(modelBase.pm25)} µg/m³
-              </p>
-            )}
-            {hourly?.points.length ? (
-              <div tabIndex={0} role="region" aria-label="พยากรณ์รายชั่วโมง เลื่อนแนวนอนได้" className="mt-3 overflow-x-auto rounded-2xl bg-slate-100/80 [scrollbar-width:thin] focus-visible:outline-emerald-700">
-                <ol className="flex w-max min-w-full divide-x divide-slate-200 px-1 py-3">
-                  {[...hourly.points].sort((a, b) => a.hoursAhead - b.hoursAhead).map(point => (
-                    <li key={point.hoursAhead} className="grid min-w-[4.6rem] flex-1 justify-items-center gap-2 px-2">
-                      <time dateTime={point.targetAt} title={formatObservedAt(point.targetAt)} className="text-xs font-semibold tabular-nums">{clock.format(new Date(point.targetAt))}</time>
-                      <AirQualityExpression pm25={point.predictedPM25} />
-                      <span className="text-lg font-bold tabular-nums">{formatReading(point.predictedPM25)}</span>
-                      <span className="sr-only">{getThaiAqiMeta(point.predictedPM25).thaiLabel}</span>
-                    </li>
-                  ))}
-                </ol>
+            <p className="mt-1 text-xs text-slate-600">
+              PM2.5 (µg/m³){hourly?.source && " · " + hourly.source}{hourlyPoints.length ? " · Extra Trees" : ""}
+              {hourly?.experimental && hourlyPoints.length ? " · ผลทดลอง" : ""}
+            </p>
+            {hourly?.observedAt && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white/75 px-3 py-2">
+                <p className="text-xs text-slate-600">เวลาตรวจวัดที่โมเดลใช้เป็นฐาน</p>
+                <p className="mt-1 text-sm font-semibold tabular-nums">
+                  <time dateTime={hourly.observedAt}>{formatObservedAt(hourly.observedAt)}</time>
+                  {modelBase && " · " + formatReading(modelBase.pm25) + " µg/m³"}
+                </p>
               </div>
+            )}
+            {hourlyPoints.length ? (
+              <>
+                {upcomingPoints.length > 0 ? (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-semibold">ช่วงเวลาที่ยังมาไม่ถึง</h3>
+                    <HourlyPoints points={upcomingPoints} label="ค่าพยากรณ์สำหรับช่วงเวลาที่ยังมาไม่ถึง" />
+                  </div>
+                ) : <p role="status" className="mt-3 text-sm text-slate-700">เวลาพยากรณ์รอบล่าสุดผ่านไปแล้ว กำลังรอข้อมูลรอบใหม่</p>}
+                {elapsedPoints.length > 0 && (
+                  <details className="mt-3 rounded-xl border border-slate-200 bg-white/70 px-3 py-2">
+                    <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+                      เวลาที่ผ่านไปแล้ว ({elapsedPoints.length} จุด)
+                    </summary>
+                    <p className="mt-2 text-xs text-slate-600">ค่าที่โมเดลเคยพยากรณ์ไว้สำหรับเวลาเหล่านี้</p>
+                    <HourlyPoints points={elapsedPoints} label="ค่าพยากรณ์สำหรับเวลาที่ผ่านไปแล้ว" />
+                  </details>
+                )}
+              </>
             ) : <p role="status" className="mt-3 text-sm text-slate-700">
               {hourly === null ? "เชื่อมต่อบริการพยากรณ์รายชั่วโมงไม่ได้" : hourly ? hourlyReasons[hourly.reason ?? ""] ?? "ยังไม่มีพยากรณ์รายชั่วโมง" : "กำลังโหลดพยากรณ์รายชั่วโมง"}
             </p>}

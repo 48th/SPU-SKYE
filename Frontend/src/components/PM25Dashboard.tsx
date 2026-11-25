@@ -1,15 +1,20 @@
 "use client";
+import CivicNavigation, { type MapNavKey } from "@/components/CivicNavigation";
 import { useStationFavorites } from "@/lib/stationFavorites";
 
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ArrowClockwise,
-  CaretDown,
+  CaretUpDown,
   CaretLeft,
   CaretRight,
   MagnifyingGlass,
-  Heart,
+  BookmarkSimple,
+  ListBullets,
+  Ranking,
+  CloudFog,
+  ThermometerSimple,
   Plus,
   Minus,
   Crosshair,
@@ -23,11 +28,6 @@ import {
 import {
   BangkokSkylineBackdrop,
   AirQualityExpression,
-  NearbyStationBadge,
-  TopTenBadge,
-  MiniDustIcon,
-  MiniThermometerIcon,
-  MiniWindIcon,
 } from "@/components/CivicIllustrationAssets";
 import DistrictAnalyticsDrawer, {
   type DrawerSection,
@@ -40,19 +40,24 @@ import {
   formatObservedAt,
   THAI_AQI_TIERS,
   fetchForecast,
+  fetchDistrictTomorrow,
+  type DistrictTomorrowForecast,
   fetchLiveStations,
   getThaiAqiMeta,
   type District,
   type DistrictStation,
-  type ForecastHorizon,
   type ForecastResponse,
   type FetchStatus,
 } from "@/lib/forecastService";
 
-type NavKey = "map" | "hourly" | "shap" | "standards";
 type SidebarTab = "nearby" | "top10";
 
 
+
+const forecastDateFormat = {
+  TH: new Intl.DateTimeFormat("th-TH", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }),
+  EN: new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bangkok" }),
+};
 
 function DashboardSkeleton() {
   return (
@@ -84,11 +89,18 @@ function DashboardSkeleton() {
 
 export default function PM25Dashboard() {
   const [lang, setLang] = useState<"TH" | "EN">("TH");
-  const [activeNav, setActiveNav] = useState<NavKey>("map");
+  const [activeNav, setActiveNav] = useState<MapNavKey>("map");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileStationsOpen, setMobileStationsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("nearby");
   const [districtFilter, setDistrictFilter] = useState<"ALL" | District>("ALL");
+  const [forecastDistrictOverride, setForecastDistrictOverride] = useState<District>();
+  const [districtForecastRevision, setDistrictForecastRevision] = useState(0);
+  const [districtForecast, setDistrictForecast] = useState<{
+    district: District;
+    revision: number;
+    result: DistrictTomorrowForecast | null;
+  }>();
   const [searchQuery, setSearchQuery] = useState("");
   const { ids: favorites, toggle: toggleStationFavorite } = useStationFavorites();
 
@@ -107,7 +119,7 @@ export default function PM25Dashboard() {
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerSection, setDrawerSection] = useState<DrawerSection>("all");
-  const [horizon, setHorizon] = useState<ForecastHorizon>("24h");
+  const [selectionRevision, setSelectionRevision] = useState(0);
 
   // API states
   const [initialLoading, setInitialLoading] = useState(true);
@@ -115,13 +127,33 @@ export default function PM25Dashboard() {
   const [forecastData, setForecastData] = useState<ForecastResponse | null>(
     null
   );
-  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<string>("");
 
   const abortRef = useRef<AbortController | null>(null);
 
-  const tomorrow = forecastData?.district === selectedStation.id ? forecastData?.tomorrow : undefined;
+  const forecastDistrict = forecastDistrictOverride ?? selectedStation.district;
+  const districtResult = districtForecast?.district === forecastDistrict &&
+    districtForecast?.revision === districtForecastRevision ? districtForecast.result : undefined;
+
+  const districtForecastDate = districtResult ? new Date(districtResult.date + "T00:00:00+07:00") : null;
+  const partialDistrictCoverage = districtResult != null && districtResult.forecastCount < districtResult.stationCount;
+
+  useEffect(() => {
+    if (!forecastDistrict) return;
+    const controller = new AbortController();
+    fetchDistrictTomorrow(forecastDistrict, controller.signal)
+      .then(result => {
+        if (!controller.signal.aborted) {
+          setDistrictForecast({ district: forecastDistrict, revision: districtForecastRevision, result });
+        }
+      }, () => {
+        if (!controller.signal.aborted) {
+          setDistrictForecast({ district: forecastDistrict, revision: districtForecastRevision, result: null });
+        }
+      });
+    return () => controller.abort();
+  }, [forecastDistrict, districtForecastRevision]);
 
   const syncLiveStations = useCallback(async (forceRefresh = false) => {
 
@@ -137,7 +169,6 @@ export default function PM25Dashboard() {
   const loadStationForecast = useCallback(
     async (
       station: DistrictStation,
-      nextHorizon: ForecastHorizon,
       forceRefresh = false
     ) => {
       if (!station.id) return;
@@ -146,19 +177,17 @@ export default function PM25Dashboard() {
       abortRef.current = controller;
 
       setDrawerStatus("loading");
-      setDrawerError(null);
 
       try {
         const result = await fetchForecast(
           station.id,
-          nextHorizon,
+          "24h",
           controller.signal,
           forceRefresh
         );
         if (controller.signal.aborted) return;
 
         if (result.status === "error") {
-          setDrawerError(result.error ?? "Unable to fetch forecast.");
           setDrawerStatus("error");
           return;
         }
@@ -171,7 +200,6 @@ export default function PM25Dashboard() {
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        setDrawerError("Unable to load district forecast.");
         setDrawerStatus("error");
       } finally {
         setInitialLoading(false);
@@ -188,19 +216,21 @@ export default function PM25Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (selectedStation.id) void loadStationForecast(selectedStation, horizon);
-  }, [selectedStation.id, horizon, loadStationForecast]);
+    if (selectedStation.id) void loadStationForecast(selectedStation);
+  }, [selectedStation.id, loadStationForecast]);
 
   const handleOpenStation = useCallback(
     (station: DistrictStation, section: DrawerSection = "all") => {
       setSelectedStation(station);
+      if (section === "all") setForecastDistrictOverride(undefined);
       setMobileStationsOpen(false);
       setDrawerSection(section);
       setDrawerOpen(true);
-      setActiveNav(section === "hourly" ? "hourly" : section === "shap" ? "shap" : "map");
-      if (station.id === selectedStation.id) void loadStationForecast(station, horizon);
+      setSelectionRevision(revision => revision + 1);
+      setActiveNav(section === "all" ? "map" : "hourly");
+      if (station.id === selectedStation.id) void loadStationForecast(station);
     },
-    [horizon, loadStationForecast, selectedStation.id]
+    [loadStationForecast, selectedStation.id]
   );
 
   useEffect(() => {
@@ -210,9 +240,9 @@ export default function PM25Dashboard() {
         setActiveNav("standards");
         setDrawerOpen(false);
         setShowStandardsModal(true);
-      } else if (hash === "#shap" && selectedStation.id) {
+      } else if ((hash === "#hourly" || hash === "#shap") && selectedStation.id) {
         setShowStandardsModal(false);
-        handleOpenStation(selectedStation, "shap");
+        handleOpenStation(selectedStation, "hourly");
       } else {
         return;
       }
@@ -223,22 +253,28 @@ export default function PM25Dashboard() {
     return () => window.removeEventListener("hashchange", openTool);
   }, [handleOpenStation, selectedStation]);
 
-  const handleHorizonChange = useCallback(
-    (nextH: ForecastHorizon) => {
-      setHorizon(nextH);
-      loadStationForecast(selectedStation, nextH);
-    },
-    [selectedStation, loadStationForecast]
-  );
-
   const handleManualRefresh = useCallback(() => {
     syncLiveStations(true);
-    loadStationForecast(selectedStation, horizon, true);
-  }, [selectedStation, horizon, loadStationForecast, syncLiveStations]);
+    setDistrictForecastRevision(revision => revision + 1);
+    loadStationForecast(selectedStation, true);
+  }, [selectedStation, loadStationForecast, syncLiveStations]);
 
-  const handleLoadFallback = useCallback(() => {
-    handleManualRefresh();
-  }, [handleManualRefresh]);
+  const handleDistrictSelection = (district: District) => {
+    setDistrictFilter(district);
+    if (district === "ALL") {
+      setForecastDistrictOverride(undefined);
+      return;
+    }
+    const station = selectedStation.district === district
+      ? selectedStation
+      : stations.find(candidate => candidate.district === district);
+    if (station) {
+      handleOpenStation(station);
+    } else {
+      setForecastDistrictOverride(district);
+      setDrawerOpen(false);
+    }
+  };
 
   const toggleFavorite = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -279,20 +315,7 @@ export default function PM25Dashboard() {
     [stations]
   );
 
-  const navItems: {
-    key: NavKey;
-    labelTh: string;
-    labelEn: string;
-    shortTh: string;
-    shortEn: string;
-  }[] = [
-    { key: "map", labelTh: "แผนที่คุณภาพอากาศ", labelEn: "Air Quality Map", shortTh: "แผนที่", shortEn: "Map" },
-    { key: "hourly", labelTh: "พยากรณ์รายชั่วโมง", labelEn: "Hourly Forecast", shortTh: "รายชั่วโมง", shortEn: "Hourly" },
-    { key: "shap", labelTh: "วิเคราะห์ปัจจัย SHAP", labelEn: "SHAP Analysis", shortTh: "ปัจจัย SHAP", shortEn: "SHAP" },
-    { key: "standards", labelTh: "ดัชนีมาตรฐาน", labelEn: "AQI Standards", shortTh: "มาตรฐาน", shortEn: "AQI" },
-  ];
-
-  const handleNavClick = (key: NavKey) => {
+  const handleNavClick = (key: MapNavKey) => {
     setActiveNav(key);
     if (key === "map") {
       setDrawerOpen(false);
@@ -300,9 +323,6 @@ export default function PM25Dashboard() {
     } else if (key === "hourly") {
       setShowStandardsModal(false);
       handleOpenStation(selectedStation, "hourly");
-    } else if (key === "shap") {
-      setShowStandardsModal(false);
-      handleOpenStation(selectedStation, "shap");
     } else if (key === "standards") {
       setDrawerOpen(false);
       setShowStandardsModal(true);
@@ -362,32 +382,7 @@ export default function PM25Dashboard() {
             </div>
           </div>
 
-          {/* Center: Single-Row Pill Nav (Scrollable Compact on Mobile, 4-col on iPad, Pill on Desktop) */}
-          <nav
-            aria-label="Primary civic portal navigation"
-            className="order-3 xl:order-2 w-full xl:w-auto bg-neutral-200/65 backdrop-blur-md text-slate-800 rounded-full p-1 border border-neutral-300/70 shadow-sm flex overflow-x-auto no-scrollbar sm:grid sm:grid-cols-4 xl:inline-flex items-center gap-1"
-          >
-            {navItems.map((item) => {
-              const isActive = activeNav === item.key;
-              const label = (
-                <>
-                  <span className="sm:hidden">{lang === "TH" ? item.shortTh : item.shortEn}</span>
-                  <span className="hidden sm:inline">{lang === "TH" ? item.labelTh : item.labelEn}</span>
-                </>
-              );
-              const navClass = `flex-1 sm:flex-initial px-2.5 sm:px-3 xl:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-semibold text-center whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-800 ${
-                isActive
-                  ? "bg-neutral-800 text-white border border-transparent shadow-sm"
-                  : "text-slate-700 border border-transparent hover:bg-white"
-              }`;
-              return (
-                <button key={item.key} type="button" onClick={() => handleNavClick(item.key)}
-                  aria-current={isActive ? "page" : undefined} className={navClass}>
-                  {label}
-                </button>
-              );
-            })}
-          </nav>
+          <CivicNavigation lang={lang} active={activeNav} onMapNavigate={handleNavClick} />
 
           {/* Right: Language switcher TH | EN + Manual Refresh */}
           <div className="order-2 xl:order-3 flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -686,7 +681,7 @@ export default function PM25Dashboard() {
                         : "bg-white/75 text-slate-900 hover:bg-slate-100"
                     }`}
                   >
-                    <NearbyStationBadge size={18} />
+                    <ListBullets size={18} weight="bold" aria-hidden="true" />
                     <span>{lang === "TH" ? "สถานีตามชื่อ" : "Stations"}</span>
                   </button>
 
@@ -700,7 +695,7 @@ export default function PM25Dashboard() {
                         : "bg-white/75 text-slate-900 hover:bg-slate-100"
                     }`}
                   >
-                    <TopTenBadge size={18} />
+                    <Ranking size={18} weight="bold" aria-hidden="true" />
                     <span>{lang === "TH" ? "10 อันดับสูงสุด" : "Top 10"}</span>
                   </button>
                 </div>
@@ -710,9 +705,7 @@ export default function PM25Dashboard() {
                   <div className="relative">
                     <select
                       value={districtFilter}
-                      onChange={(e) =>
-                        setDistrictFilter(e.target.value as "ALL" | District)
-                      }
+                      onChange={(e) => handleDistrictSelection(e.target.value)}
                       aria-label={lang === "TH" ? "เลือกเขตในกรุงเทพฯ" : "Filter by district"}
                       className="w-full appearance-none pl-3 pr-8 py-1.5 sm:py-2 rounded-xl border border-neutral-300/70 bg-neutral-100/70 body-5 text-slate-900 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-600"
                     >
@@ -727,8 +720,8 @@ export default function PM25Dashboard() {
                         );
                       })}
                     </select>
-                    <CaretDown
-                      size={14}
+                    <CaretUpDown
+                      size={16}
                       weight="bold"
                       className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-900"
                       aria-hidden
@@ -737,8 +730,8 @@ export default function PM25Dashboard() {
 
                   <div className="relative">
                     <MagnifyingGlass
-                      size={16}
-                      weight="bold"
+                      size={17}
+                      weight="regular"
                       className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-700"
                       aria-hidden
                     />
@@ -781,7 +774,7 @@ export default function PM25Dashboard() {
                       <button
                         type="button"
                         onClick={() => {
-                          setDistrictFilter("ALL");
+                          handleDistrictSelection("ALL");
                           setSearchQuery("");
                         }}
                         className="btn-outline button-sm"
@@ -850,8 +843,8 @@ export default function PM25Dashboard() {
                                       : "bg-white/75 text-slate-600 hover:bg-slate-100"
                                   }`}
                                 >
-                                  <Heart
-                                    size={16}
+                                  <BookmarkSimple
+                                    size={17}
                                     weight={isFav ? "fill" : "bold"}
                                     aria-hidden
                                   />
@@ -870,10 +863,10 @@ export default function PM25Dashboard() {
                             </div>
                           </div>
 
-                          {/* 3 crisp comic-outlined metric pills */}
+                          {/* Station measurements */}
                           <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                             <div className="bg-neutral-100/70 border-[1.5px] sm:border border-neutral-300/70 rounded-full px-1.5 sm:px-2 py-0.5 sm:py-1 shadow-sm flex items-center justify-center gap-1 text-slate-900 min-w-0">
-                              <MiniDustIcon size={13} />
+                              <CloudFog size={14} weight="bold" className="shrink-0 text-slate-600" aria-hidden="true" />
                               <span className="caption-3 tabular-nums truncate">
                                 {formatReading(station.currentPM25)}
                               </span>
@@ -881,7 +874,7 @@ export default function PM25Dashboard() {
                             </div>
 
                             <div className="bg-neutral-100/70 border-[1.5px] sm:border border-neutral-300/70 rounded-full px-1.5 sm:px-2 py-0.5 sm:py-1 shadow-sm flex items-center justify-center gap-1 text-slate-900 min-w-0">
-                              <MiniThermometerIcon size={13} />
+                              <ThermometerSimple size={14} weight="bold" className="shrink-0 text-orange-700" aria-hidden="true" />
                               <span className="caption-3 tabular-nums truncate">
                                 {formatReading(station.temperatureC)}
                               </span>
@@ -889,7 +882,7 @@ export default function PM25Dashboard() {
                             </div>
 
                             <div className="bg-neutral-100/70 border-[1.5px] sm:border border-neutral-300/70 rounded-full px-1.5 sm:px-2 py-0.5 sm:py-1 shadow-sm flex items-center justify-center gap-1 text-slate-900 min-w-0">
-                              <MiniWindIcon size={13} />
+                              <Wind size={14} weight="bold" className="shrink-0 text-sky-700" aria-hidden="true" />
                               <span className="caption-3 tabular-nums truncate">
                                 {formatReading(station.windSpeedMs)}
                               </span>
@@ -919,26 +912,79 @@ export default function PM25Dashboard() {
               </button>
             </div>
 
-            {/* ── Bottom 7 Day Bangkok Forecast Strip (Mobile Swipe + iPad Grid + Desktop Dock) ── */}
-            <div className="mx-2.5 my-2.5 sm:mx-4 sm:mb-4 lg:mt-4 xl:m-0 xl:absolute xl:bottom-4 xl:inset-x-4 z-20 bg-white/80 backdrop-blur-xl border border-neutral-300/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 shadow-sm hidden sm:flex flex-col gap-2">
+            <section aria-labelledby="district-tomorrow-heading" aria-live="polite"
+              className="mx-2.5 my-2.5 sm:mx-4 sm:mb-4 lg:mt-4 xl:m-0 xl:absolute xl:bottom-4 xl:inset-x-4 z-20 bg-white/80 backdrop-blur-xl border border-neutral-300/70 rounded-xl sm:rounded-2xl p-2.5 sm:p-3 shadow-sm flex flex-col gap-2">
               <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 px-0.5 sm:px-1">
-                <h2 className="title-4 text-slate-900">{lang === "TH" ? "พยากรณ์วันพรุ่งนี้" : "Tomorrow’s forecast"}</h2>
-                {forecastData?.modelName && tomorrow && <span className="caption-5 text-slate-700">{forecastData.modelName}</span>}
+                <h2 id="district-tomorrow-heading" className="title-4 text-slate-900">
+                  {lang === "TH" ? "พยากรณ์วันพรุ่งนี้" : "Tomorrow’s forecast"}
+                </h2>
+                {districtResult?.averagePM25 != null && <span className="caption-5 text-slate-700">{districtResult.modelName}</span>}
               </div>
-              <div className="mt-2 flex items-center gap-3 rounded-xl bg-neutral-200/55 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-slate-900">{selectedStation.nameTh}</p>
-                  <p className="text-sm text-slate-600">{tomorrow ? tomorrow.date
-                    : drawerStatus === "loading" ? (lang === "TH" ? "กำลังโหลดพยากรณ์…" : "Loading forecast…")
-                    : (lang === "TH" ? "ยังไม่มีพยากรณ์วันพรุ่งนี้สำหรับสถานีนี้" : "Tomorrow’s forecast is unavailable for this station")}</p>
+              <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-xl border border-slate-200 bg-white/75 px-3 py-2.5 sm:px-4">
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900">
+                    {forecastDistrict ? (lang === "TH" ? "เขต" + forecastDistrict : forecastDistrict)
+                      : (lang === "TH" ? "เลือกเขตหรือสถานีบนแผนที่" : "Choose a district or map station")}
+                  </p>
+                  {districtForecastDate && Number.isFinite(districtForecastDate.getTime()) && (
+                    <time dateTime={districtResult?.date} className="mt-0.5 block text-sm text-slate-600">
+                      {forecastDateFormat[lang].format(districtForecastDate)}
+                    </time>
+                  )}
+                  {forecastDistrict && districtResult == null && (
+                    <p className="mt-1 text-sm text-slate-600">
+                      {districtResult === undefined ? (lang === "TH" ? "กำลังโหลดพยากรณ์…" : "Loading forecast…")
+                        : (lang === "TH" ? "เชื่อมต่อบริการพยากรณ์ไม่ได้" : "Forecast service unavailable")}
+                    </p>
+                  )}
+                  {districtResult?.averagePM25 === null && (
+                    <p className="mt-1 text-sm text-slate-600">
+                      {lang === "TH" ? "ยังไม่มีผลพยากรณ์จากสถานีในเขตนี้" : "No stations in this district have a forecast"}
+                    </p>
+                  )}
                 </div>
-                {tomorrow && <p className="shrink-0 font-bold tabular-nums text-neutral-700">
-                  {formatReading(tomorrow.pm25)} <span className="text-xs font-normal">µg/m³</span>
-                </p>}
+                {districtResult?.averagePM25 != null && (
+                  <div>
+                    <p className="text-xs text-slate-600">
+                      {lang === "TH" ? "PM2.5 เฉลี่ยจากผลพยากรณ์ของสถานี" : "Mean PM2.5 across station forecasts"}
+                    </p>
+                    <p className="text-2xl font-bold tabular-nums text-slate-900">
+                      {formatReading(districtResult.averagePM25)} <span className="text-xs font-normal">µg/m³</span>
+                    </p>
+                  </div>
+                )}
+                {districtResult && (
+                  <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-2 text-xs">
+                    <span className={partialDistrictCoverage
+                      ? "rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-950"
+                      : "rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-800"}>
+                      {lang === "TH"
+                        ? "มีผลพยากรณ์ " + districtResult.forecastCount + " จาก " + districtResult.stationCount + " สถานี"
+                        : districtResult.forecastCount + " of " + districtResult.stationCount + " stations have forecasts"}
+                    </span>
+                    {districtResult.forecastCount === 1 && (
+                      <span className="text-slate-600">{lang === "TH" ? "ค่านี้อ้างอิงจากสถานีเดียว" : "This value is based on one station"}</span>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
+            </section>
           </section>
         )}
+
+        <DistrictAnalyticsDrawer
+          isOpen={drawerOpen}
+          station={selectedStation}
+          lang={lang}
+          focusSection={drawerSection}
+          selectionRevision={selectionRevision}
+          data={forecastData}
+          onClose={() => {
+            setDrawerOpen(false);
+            setActiveNav("map");
+          }}
+          onRefresh={handleManualRefresh}
+        />
 
         {/* Footer */}
         <footer className="pt-2 hidden sm:flex flex-wrap items-center justify-between gap-4">
@@ -956,25 +1002,6 @@ export default function PM25Dashboard() {
           </p>
         </footer>
       </main>
-
-      {/* ── Slide-Over District Analytics Drawer (Tuned Random Forest + SHAP) ── */}
-      <DistrictAnalyticsDrawer
-        isOpen={drawerOpen}
-        station={selectedStation}
-        lang={lang}
-        horizon={horizon}
-        focusSection={drawerSection}
-        status={drawerStatus}
-        data={forecastData}
-        error={drawerError}
-        onClose={() => {
-          setDrawerOpen(false);
-          setActiveNav("map");
-        }}
-        onHorizonChange={handleHorizonChange}
-        onRefresh={handleManualRefresh}
-        onLoadFallback={handleLoadFallback}
-      />
 
       {/* ── Thai AQI 5 Tier Standards Reference Modal ── */}
       {showStandardsModal && (

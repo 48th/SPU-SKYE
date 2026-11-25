@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import WeatherModelExperiment from "./WeatherModelExperiment";
 import hourlyEvaluation from "./hourly-evaluation.json";
 import { formatObservedAt, formatReading, getThaiAqiMeta } from "@/lib/forecastService";
 
@@ -37,6 +38,107 @@ type Comparison = {
   reason?: string;
   points: { targetAt: string; actual: number | null; predicted: number | null }[];
 };
+type IssuedComparison = {
+  windowDays: number;
+  issuedCount: number;
+  matchedCount: number;
+  pendingCount: number;
+  missingActualCount: number;
+  modelMae: number | null;
+  persistenceMae: number | null;
+  points: {
+    issuedAt: string; targetAt: string; predicted: number; persistence: number; actual: number | null;
+  }[];
+};
+
+type HourlyShap =
+  | { reason: string }
+  | {
+    hoursAhead: number;
+    baseValue: number;
+    predictedPM25: number;
+    referenceCount: number;
+    contributions: { feature: string; value: number }[];
+  };
+const weatherFields = {
+  wind_speed_10m: ["ความเร็วลม", "km/h"],
+  wind_direction_10m: ["ทิศที่ลมพัดมา", "°"],
+  rain: ["ฝนสะสมในชั่วโมงก่อนหน้า", "mm"],
+  relative_humidity_2m: ["ความชื้นสัมพัทธ์", "%"],
+  temperature_2m: ["อุณหภูมิ", "°C"],
+} as const;
+
+type WeatherField = keyof typeof weatherFields;
+type WeatherPayload = {
+  weather: {
+    timezone: string;
+    hourly: Partial<Record<WeatherField, (number | null)[]>> & { time: string[] };
+  };
+};
+
+function weatherAtHour(payload: WeatherPayload, preferred?: string) {
+  const hourly = payload.weather.hourly;
+  if (payload.weather.timezone !== "Asia/Bangkok") return null;
+  const parseTime = (stamp: string) => Date.parse(stamp + "+07:00");
+  const anchor = preferred ? Date.parse(preferred) : Date.now();
+  const index = hourly.time.findLastIndex(stamp => parseTime(stamp) <= anchor);
+  if (index === -1 || (preferred && parseTime(hourly.time[index]) !== anchor)) return null;
+  const readings = (Object.keys(weatherFields) as WeatherField[]).map(field => {
+    const value = hourly[field]?.[index];
+    return { field, value: typeof value === "number" && Number.isFinite(value) ? value : null };
+  });
+  return { time: hourly.time[index] + "+07:00", readings };
+}
+
+const correlationFields = ["wind_speed_10m", "rain", "relative_humidity_2m", "temperature_2m"] as const;
+const minimumWeatherPairs = 12;
+
+function weatherCorrelations(payload: WeatherPayload, points: Comparison["points"]) {
+  if (payload.weather.timezone !== "Asia/Bangkok") return [];
+  const hourly = payload.weather.hourly;
+  const pmByTime = new Map(points.flatMap(({ targetAt, actual }) =>
+    actual != null && Number.isFinite(actual) ? [[Date.parse(targetAt), actual] as const] : []
+  ));
+  return correlationFields.map(field => {
+    const pairs = hourly.time.flatMap((stamp, index) => {
+      const pm = pmByTime.get(Date.parse(stamp + "+07:00"));
+      const value = hourly[field]?.[index];
+      return pm != null && typeof value === "number" && Number.isFinite(value) ? [[pm, value] as const] : [];
+    });
+    const count = pairs.length;
+    if (count < minimumWeatherPairs) return { field, count, reason: "few" as const, correlation: null };
+    const pmMean = pairs.reduce((sum, [pm]) => sum + pm, 0) / count;
+    const weatherMean = pairs.reduce((sum, [, value]) => sum + value, 0) / count;
+    let covariance = 0;
+    let pmVariance = 0;
+    let weatherVariance = 0;
+    for (const [pm, value] of pairs) {
+      const pmDelta = pm - pmMean;
+      const weatherDelta = value - weatherMean;
+      covariance += pmDelta * weatherDelta;
+      pmVariance += pmDelta ** 2;
+      weatherVariance += weatherDelta ** 2;
+    }
+    const scale = Math.sqrt(pmVariance * weatherVariance);
+    if (scale <= 1e-9) return { field, count, reason: "constant" as const, correlation: null };
+    return { field, count, correlation: Math.max(-1, Math.min(1, covariance / scale)) };
+  });
+}
+
+type HourlyExplanationResponse = {
+  hourlyForecast: {
+    shap?: HourlyShap; reason?: string; observedAt?: string;
+    points?: { hoursAhead: number; targetAt: string; predictedPM25: number }[];
+  };
+};
+
+function shapFeatureLabel(feature: string) {
+  const lag = /^lag(\d+)$/.exec(feature)?.[1];
+  if (lag === "0") return "PM2.5 ชั่วโมงล่าสุด";
+  if (lag) return "PM2.5 ย้อนหลัง " + lag + " ชม.";
+  return feature === "sin" || feature === "cos" ? "รอบเวลาในวัน (" + feature + ")" : feature;
+}
+
 const comparisonTick = new Intl.DateTimeFormat("th-TH", {
   timeZone: "Asia/Bangkok", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
 });
@@ -63,7 +165,6 @@ function summarizeByTime(points: Comparison["points"]) {
   return [morning, other];
 }
 
-const api = (process.env.NEXT_PUBLIC_STATION_API_URL || "http://127.0.0.1:8001").replace(/\/+$/, "");
 const reasons: Record<string, string> = {
   missing_hourly_observations: "ข้อมูลบางชั่วโมงขาด",
   stale_observations: "ค่ารายชั่วโมงเก่า",
@@ -78,7 +179,7 @@ const hourlyLabel = (s: Station) => s.hourlyForecast?.ready ? "พร้อม" 
   reasons[s.hourlyForecast?.reason ?? ""] ?? "รอตรวจสอบ";
 
 async function request<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(api + path, { cache: "no-store", signal });
+  const response = await fetch("/admin/api" + path, { cache: "no-store", credentials: "same-origin", signal });
   if (!response.ok) throw new Error(String(response.status));
   return response.json();
 }
@@ -91,6 +192,16 @@ export default function AdminPage() {
   const [selected, setSelected] = useState("");
   const [comparisonHorizon, setComparisonHorizon] = useState(1);
   const [comparison, setComparison] = useState<{ id: string; horizon: number; value: Comparison | null }>();
+  const [stationWeather, setStationWeather] = useState<{
+    id: string; revision: number; payload: WeatherPayload | null;
+  }>();
+  const [issuedComparison, setIssuedComparison] = useState<{
+    id: string; horizon: number; revision: number; value: IssuedComparison | null;
+  }>();
+  const [explanation, setExplanation] = useState<{
+    id: string; horizon: number; revision: number;
+    forecast: HourlyExplanationResponse["hourlyForecast"] | null;
+  }>();
   const [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -98,7 +209,7 @@ export default function AdminPage() {
   useEffect(() => {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]);
-    request<Snapshot>("/api/v1/forecast?diagnostics=true", signal).then(data => {
+    request<Snapshot>("/forecast?diagnostics=true", signal).then(data => {
       if (!controller.signal.aborted) {
         setSnapshot(data);
         setFailed(false);
@@ -108,7 +219,7 @@ export default function AdminPage() {
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
-    request<Evaluation>("/api/v1/evaluation", signal).then(data => {
+    request<Evaluation>("/evaluation", signal).then(data => {
       if (!controller.signal.aborted) setEvaluation(data);
     }).catch(() => {});
     return () => controller.abort();
@@ -128,7 +239,7 @@ export default function AdminPage() {
     if (!comparisonId) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
-    const url = "/api/v1/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly-comparison?horizon=" + comparisonHorizon;
+    const url = "/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly-comparison?horizon=" + comparisonHorizon;
     request<Comparison>(url, signal).then(value => {
       if (!controller.signal.aborted) setComparison({ id: comparisonId, horizon: comparisonHorizon, value });
     }).catch(() => {
@@ -136,8 +247,71 @@ export default function AdminPage() {
     });
     return () => controller.abort();
   }, [comparisonId, comparisonHorizon, revision]);
+  useEffect(() => {
+    if (!comparisonId) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
+    const url = "/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly?shap_horizon=" + comparisonHorizon;
+    const store = (forecast: HourlyExplanationResponse["hourlyForecast"] | null) => {
+      if (!controller.signal.aborted) {
+        setExplanation({ id: comparisonId, horizon: comparisonHorizon, revision, forecast });
+      }
+    };
+    request<HourlyExplanationResponse>(url, signal).then(reply => store(reply.hourlyForecast), () => store(null));
+    return () => controller.abort();
+  }, [comparisonId, comparisonHorizon, revision]);
+  useEffect(() => {
+    if (!comparisonId) return;
+    const controller = new AbortController();
+    async function refresh() {
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
+      const url = "/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly-issued?horizon=" + comparisonHorizon;
+      try {
+        const value = await request<IssuedComparison>(url, signal);
+        if (!controller.signal.aborted) setIssuedComparison({ id: comparisonId, horizon: comparisonHorizon, revision, value });
+      } catch {
+        if (!controller.signal.aborted) setIssuedComparison({ id: comparisonId, horizon: comparisonHorizon, revision, value: null });
+      }
+    }
+    void refresh();
+    const timer = window.setInterval(refresh, 60000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [comparisonId, comparisonHorizon, revision]);
+  const issued = issuedComparison?.id === comparisonId &&
+    issuedComparison?.horizon === comparisonHorizon && issuedComparison.revision === revision
+    ? issuedComparison.value : undefined;
+
+  const hourlyExplanation = explanation?.id === comparisonId &&
+    explanation?.horizon === comparisonHorizon && explanation.revision === revision
+    ? explanation.forecast : undefined;
+  const shap = hourlyExplanation?.shap;
+
+  useEffect(() => {
+    if (!comparisonId) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]);
+    const store = (payload: WeatherPayload | null) => {
+      if (!controller.signal.aborted) setStationWeather({ id: comparisonId, revision, payload });
+    };
+    request<WeatherPayload>("/stations/" + encodeURIComponent(comparisonId) + "/weather", signal)
+      .then(store, () => store(null));
+    return () => controller.abort();
+  }, [comparisonId, revision]);
+
+  const weatherPayload = stationWeather?.id === comparisonId && stationWeather?.revision === revision
+    ? stationWeather.payload : undefined;
+  const weatherTarget = hourlyExplanation?.points?.find(point => point.hoursAhead === comparisonHorizon);
+  const weatherAnchor = weatherTarget?.targetAt ?? hourlyExplanation?.observedAt;
+  const weather = weatherPayload ? weatherAtHour(weatherPayload, weatherAnchor) : weatherPayload;
+  const weatherRain = weather?.readings.find(reading => reading.field === "rain")?.value;
+
   const comparisonResult = comparison?.id === comparisonId && comparison?.horizon === comparisonHorizon
     ? comparison.value : undefined;
+  const correlations = weatherPayload && comparisonResult
+    ? weatherCorrelations(weatherPayload, comparisonResult.points) : [];
   const lastPair = comparisonResult?.points.findLast(point => point.actual != null && point.predicted != null);
 
   const hourlyReadings = station?.hourlyForecast?.history ?? [];
@@ -219,7 +393,7 @@ export default function AdminPage() {
             </div>
           </section>
           <section className={panel} aria-labelledby="forecast-actual-title">
-            <h2 id="forecast-actual-title" className="text-lg font-bold">พยากรณ์เทียบค่าจริง</h2>
+            <h2 id="forecast-actual-title" className="text-lg font-bold">ทดสอบย้อนหลังเทียบค่าจริง</h2>
             <p className="mt-1 text-sm text-neutral-600">คำนวณย้อนหลังด้วยโมเดลที่ระบบใช้อยู่ เทียบกับค่าที่สถานีวัดได้ในชั่วโมงเดียวกัน</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
               <label className="min-w-0 text-xs font-semibold text-neutral-700">สถานี
@@ -294,6 +468,167 @@ export default function AdminPage() {
             </p>}
           </section>
 
+          <section className={panel} aria-labelledby="issued-hourly-title">
+            <h2 id="issued-hourly-title" className="text-lg font-bold">พยากรณ์ที่ระบบออกจริง</h2>
+            <p className="mt-1 text-sm text-neutral-600">
+              บันทึกก่อนถึงเวลาเป้าหมาย · ใช้สถานีและช่วงล่วงหน้าที่เลือกด้านบน
+              {comparisonId && " · " + comparisonId.toUpperCase() + " · " + comparisonHorizon + " ชั่วโมง"}
+            </p>
+            {issued ? (
+              <>
+                <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    ["บันทึกแล้ว", issued.issuedCount], ["เทียบค่าจริงได้", issued.matchedCount],
+                    ["ยังไม่ถึงเวลาเป้าหมาย", issued.pendingCount], ["ถึงเวลาแล้ว รอค่าจริง", issued.missingActualCount],
+                  ].map(([label, count]) => (
+                    <div key={label} className="rounded-xl bg-neutral-100 p-3">
+                      <dt className="text-xs text-neutral-700">{label}</dt>
+                      <dd className="mt-1 text-xl font-bold tabular-nums">{count}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="mt-3 text-sm text-neutral-700">
+                  {issued.matchedCount > 0 && issued.modelMae != null && issued.persistenceMae != null
+                    ? "MAE โมเดล " + formatReading(issued.modelMae, 2) + " · MAE วิธีใช้ค่าล่าสุด " + formatReading(issued.persistenceMae, 2) + " µg/m³ จากคู่เดียวกัน"
+                    : "จะแสดง MAE เมื่อมีพยากรณ์ที่จับคู่กับค่าตรวจวัดได้"}
+                </p>
+                {issued.points.length > 0 && (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full min-w-[39rem] text-left text-sm tabular-nums">
+                      <caption className="pb-2 text-left text-xs text-neutral-600">รายการล่าสุดในช่วง {issued.windowDays} วัน · หน่วย µg/m³</caption>
+                      <thead className="bg-neutral-100"><tr>
+                        <th scope="col" className="p-2">เวลาออกผล</th>
+                        <th scope="col" className="p-2">เวลาเป้าหมาย</th>
+                        <th scope="col" className="p-2 text-right">โมเดล</th>
+                        <th scope="col" className="p-2 text-right">ใช้ค่าล่าสุด</th>
+                        <th scope="col" className="p-2 text-right">ค่าจริง</th>
+                      </tr></thead>
+                      <tbody>{issued.points.map(point => (
+                        <tr key={point.targetAt} className="border-t border-neutral-200">
+                          <td className="p-2">{time(point.issuedAt)}</td>
+                          <td className="p-2">{time(point.targetAt)}</td>
+                          <td className="p-2 text-right">{formatReading(point.predicted, 2)}</td>
+                          <td className="p-2 text-right">{formatReading(point.persistence, 2)}</td>
+                          <td className="p-2 text-right">{point.actual === null ? "—" : formatReading(point.actual, 2)}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                )}
+                {issued.issuedCount === 0 && <p className="mt-2 text-sm text-neutral-600">ยังไม่มีรายการในช่วง {issued.windowDays} วันที่ผ่านมา ระบบจะเริ่มบันทึกเมื่อพยากรณ์ล่วงหน้าได้</p>}
+              </>
+            ) : <p role="status" className="mt-3 text-sm text-neutral-600">
+              {issued === null ? "โหลดบันทึกพยากรณ์ไม่ได้" : comparisonId || loading ? "กำลังโหลดบันทึกพยากรณ์…" : "ยังไม่มีข้อมูลสถานี"}
+            </p>}
+          </section>
+
+          <section className={panel} aria-labelledby="hourly-shap-title">
+            <h2 id="hourly-shap-title" className="text-lg font-bold">วิเคราะห์ปัจจัย PM2.5</h2>
+            <p className="mt-1 text-sm text-neutral-600">ใช้สถานีและช่วงเวลาที่เลือกในส่วนทดสอบย้อนหลังด้านบน
+              {comparisonId && " · " + comparisonId.toUpperCase() + " · ล่วงหน้า " + comparisonHorizon + " ชั่วโมง"}
+            </p>
+            <h3 className="mt-4 font-bold">ปัจจัยที่โมเดลใช้ · SHAP</h3>
+            {shap && !("reason" in shap) ? (
+              <>
+                <p className="mt-3 font-semibold tabular-nums">ค่าอ้างอิง {formatReading(shap.baseValue, 2)} → ค่าพยากรณ์ {formatReading(shap.predictedPM25, 2)} µg/m³</p>
+                <p className="mt-1 text-xs text-neutral-600">เทียบกับข้อมูลย้อนหลังของสถานีเดียวกัน {shap.referenceCount} ชุด · ค่าบวกเพิ่มผลพยากรณ์ ค่าลบลดผลพยากรณ์</p>
+                <ul className="mt-2 divide-y divide-neutral-200 text-sm">
+                  {shap.contributions.map(item => (
+                    <li key={item.feature} className="flex justify-between gap-3 py-2">
+                      <span>{shapFeatureLabel(item.feature)}</span>
+                      <span className="font-semibold tabular-nums">{item.value >= 0.005 ? "+" : ""}{formatReading(item.value, 2)} µg/m³</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p role="status" className="mt-3 text-sm text-neutral-600">
+                {!comparisonId ? (loading ? "กำลังโหลดสถานี…" : "ยังไม่มีข้อมูลสถานี")
+                  : hourlyExplanation === undefined ? "กำลังโหลดค่า SHAP…"
+                  : hourlyExplanation === null ? "โหลดค่า SHAP ไม่ได้"
+                  : shap && "reason" in shap && shap.reason === "no_reference_history"
+                    ? "ข้อมูลย้อนหลังของสถานียังไม่พอสำหรับคำนวณค่าอ้างอิง SHAP"
+                    : reasons[hourlyExplanation.reason ?? ""] ?? "ยังไม่มีค่า SHAP สำหรับช่วงพยากรณ์นี้"}
+              </p>
+            )}
+
+            <section className="mt-5 border-t border-neutral-200 pt-4" aria-labelledby="station-weather-context-title">
+            <h3 id="station-weather-context-title" className="font-bold">สภาพอากาศบริเวณสถานี</h3>
+            <p className="mt-1 text-sm text-neutral-600">
+              {comparisonId && comparisonId.toUpperCase() + " · "}Open-Meteo เป็นข้อมูลจากแบบจำลองอากาศบริเวณพิกัดสถานี
+              ใช้ประกอบการตีความ ส่วนค่า SHAP ด้านบนมาจากโมเดลที่ใช้ประวัติ PM2.5 และเวลาในวัน
+            </p>
+            {weather ? (
+              <>
+                <p className="mt-3 text-sm text-neutral-700">
+                  {weatherTarget ? "ชั่วโมงเป้าหมายของพยากรณ์" : weatherAnchor ? "ชั่วโมงเดียวกับค่าฝุ่นล่าสุดของโมเดล" : "ชั่วโมงล่าสุดของข้อมูลอากาศ"}
+                  {" · "}<time dateTime={weather.time}>{time(weather.time)}</time>
+                </p>
+                <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                  {weather.readings.map(({ field, value }) => (
+                    <div key={field} className="rounded-xl bg-neutral-100 p-3">
+                      <dt className="text-xs text-neutral-700">{weatherFields[field][0]}</dt>
+                      <dd className="mt-1 text-lg font-semibold tabular-nums">
+                        {value === null ? "—" : formatReading(value, field === "wind_direction_10m" ? 0 : 1) + " " + weatherFields[field][1]}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                <ul className="mt-3 space-y-1.5 text-sm text-neutral-700">
+                  {weather.readings.some(reading => reading.field === "wind_speed_10m" && reading.value !== null) && (
+                    <li>ลมอ่อนเอื้อต่อการสะสมของฝุ่น ส่วนทิศลมช่วยบอกทิศที่อากาศเคลื่อนมาถึงสถานี</li>
+                  )}
+                  {weatherRain != null && (
+                    <li>{weatherRain > 0
+                      ? "แบบจำลองระบุว่ามีฝนในชั่วโมงก่อนหน้า ฝนอาจช่วยชะล้างอนุภาคในอากาศ"
+                      : "แบบจำลองไม่พบฝนในชั่วโมงก่อนหน้า"}</li>
+                  )}
+                  <li>ใช้ค่าเหล่านี้ดูสภาพแวดล้อมร่วมกับค่าฝุ่น การระบุสาเหตุที่จุดนี้ฝุ่นสูงหรือต่ำต้องอาศัยข้อมูลเพิ่มเติม เช่น แหล่งกำเนิดและค่าตรวจวัดในช่วงเดียวกัน</li>
+                </ul>
+              </>
+            ) : (
+              <p role="status" className="mt-3 text-sm text-neutral-600">
+                {!comparisonId ? "รอข้อมูลสถานี"
+                  : weather === undefined ? "กำลังโหลดข้อมูลสภาพอากาศ…"
+                  : "ยังไม่มีข้อมูลสภาพอากาศสำหรับสถานีและชั่วโมงที่เลือก"}
+              </p>
+            )}
+            </section>
+            <section className="mt-5 border-t border-neutral-200 pt-4" aria-labelledby="weather-correlation-title">
+              <h3 id="weather-correlation-title" className="font-bold">ความสัมพันธ์ระหว่างสภาพอากาศกับ PM2.5 ที่วัดได้</h3>
+              <p className="mt-1 text-sm text-neutral-600">
+                จับคู่ค่าฝุ่นจริงกับข้อมูล Open-Meteo ของสถานีเดียวกันในชั่วโมงเดียวกันจากช่วงย้อนหลังที่แสดงด้านบน
+                ค่า r บวกหมายถึงมีแนวโน้มเพิ่มด้วยกัน ค่า r ลบหมายถึงมีแนวโน้มสวนทางกัน ผลนี้ใช้ดูความสัมพันธ์เบื้องต้น
+              </p>
+              {correlations.length > 0 ? (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-sm tabular-nums">
+                    <thead className="bg-neutral-100"><tr>
+                      <th scope="col" className="p-2 text-left">ปัจจัย</th>
+                      <th scope="col" className="p-2 text-right">ชั่วโมงที่จับคู่ได้</th>
+                      <th scope="col" className="p-2 text-right">ค่า r</th>
+                    </tr></thead>
+                    <tbody>{correlations.map(({ field, count, reason, correlation }) => (
+                      <tr key={field} className="border-t border-neutral-200">
+                        <th scope="row" className="p-2 text-left font-medium">{weatherFields[field][0]}</th>
+                        <td className="p-2 text-right">{count}</td>
+                        <td className="p-2 text-right">
+                          {correlation !== null ? formatReading(correlation, 2)
+                            : reason === "constant" ? "ค่าแทบไม่เปลี่ยนในช่วงนี้" : "ต้องมีอย่างน้อย " + minimumWeatherPairs + " คู่"}
+                        </td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              ) : <p role="status" className="mt-2 text-sm text-neutral-600">
+                {comparisonId && (weatherPayload === undefined || comparisonResult === undefined)
+                  ? "กำลังจับคู่ข้อมูลย้อนหลัง…" : "ยังไม่มีข้อมูลจับคู่สำหรับสถานีที่เลือก"}
+              </p>}
+            </section>
+          </section>
+
+          <WeatherModelExperiment stationId={comparisonId} horizon={comparisonHorizon} revision={revision} />
+
           <section className={panel} aria-labelledby="hourly-evaluation-title">
             <h2 id="hourly-evaluation-title" className="text-lg font-bold">ผลทดสอบพยากรณ์ PM2.5 รายชั่วโมง</h2>
             <p className="mt-1 text-sm text-neutral-600">ผลย้อนหลังรวม {Math.max(...hourlyEvaluation.metrics.map(row => row.stations))} สถานี · 24–25 พ.ย. 2569 · แสดงภาพรวมทุกสถานีในชุดทดสอบ</p>
@@ -319,7 +654,7 @@ export default function AdminPage() {
               </table>
             </div>
             <p className="mt-3 text-xs text-neutral-600">MAE คือค่าคลาดเฉลี่ย หน่วย µg/m³ · คลาด ≤ 5 คือสัดส่วนที่ต่างจากค่าจริงไม่เกิน ±5 µg/m³</p>
-            <p className="mt-1 text-xs text-neutral-600">ผลนี้มาจากการรันย้อนหลัง ส่วนผลเทียบคำพยากรณ์ที่ออกจริงยังไม่มีให้แสดง</p>
+            <p className="mt-1 text-xs text-neutral-600">ผลนี้มาจากการรันย้อนหลัง ดูผลที่ระบบออกจริงได้ในส่วนด้านบน</p>
           </section>
           </div>
 
@@ -398,7 +733,7 @@ export default function AdminPage() {
                     ))}</tbody>
                   </table>
                   <p className="mt-2 text-xs text-neutral-600">MAE และ RMSE เป็นค่าคลาดเคลื่อน หน่วย µg/m³ ค่ายิ่งต่ำยิ่งดี</p>
-                  <p className="mt-1 text-xs text-neutral-600">พยากรณ์สด 1–6 ชั่วโมงยังไม่มีผลเทียบค่าจริง</p>
+                  <a href="#issued-hourly-title" className="mt-1 inline-block text-xs text-neutral-700 underline">ดูผลเทียบพยากรณ์ที่ระบบออกจริง</a>
                 </div>
               ) : <p className="mt-2 text-sm text-neutral-600">ยังไม่มีผลประเมินให้แสดง</p>}
             </section>

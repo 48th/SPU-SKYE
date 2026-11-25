@@ -7,19 +7,27 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import logging
 import math
+from secrets import compare_digest
 from threading import Thread
 
-from airbkk_hourly import STATIONS as AIRBKK_HOURLY_STATIONS, compare_hourly_forecast, hourly_forecast, run_airbkk_daily, run_hourly
+from airbkk_hourly import (
+    STATIONS as AIRBKK_HOURLY_STATIONS, compare_hourly_forecast, compare_issued_hourly,
+    hourly_forecast, run_airbkk_daily, run_hourly,
+)
 from typing import Any, Dict, List, Optional
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from live_data import BKK_TZ, get_live_snapshot, get_station_weather
 from live_pipeline import start_collector
-from station_forecast import database, forecast_station, load_station_bundle, station_histories
+from hourly_weather_model import weather_explanation
+from station_forecast import (
+    AIRBKK_DAILY_ARCHIVE, database, forecast_station, initialize_database,
+    load_station_bundle, station_histories,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pm25_api")
@@ -262,6 +270,7 @@ def load_model_artifacts():
 @asynccontextmanager
 async def lifespan(app):
     global station_bundle
+    logger.info("SQLite ready: %s new archived station-days", initialize_database())
     if os.path.isfile(MODEL_PATH) or "PM25_MODEL_PATH" in os.environ:
         load_model_artifacts()
     try:
@@ -356,9 +365,8 @@ def station_daily_history(station_id: str, include_hourly: bool = False):
                 (sid, start.isoformat(), today.isoformat()),
             )}
     # Prefer the original AirBKK daily report when the archive covers a displayed day.
-    archive = os.path.join(BASE_DIR, "airbkk-daily-2026-11-09-to-22.csv")
-    if os.path.isfile(archive):
-        with open(archive, encoding="utf-8-sig", newline="") as source:
+    if AIRBKK_DAILY_ARCHIVE.is_file():
+        with AIRBKK_DAILY_ARCHIVE.open(encoding="utf-8-sig", newline="") as source:
             for row in csv.DictReader(source):
                 if row["station_id"] == sid and start.isoformat() <= row["date"] <= end.isoformat():
                     values[row["date"]] = (float(row["pm25"]), "AirBKK")
@@ -525,11 +533,22 @@ def predict(request: PredictRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def require_admin_api(request: Request):
+    expected = os.environ.get("SPU_ADMIN_API_KEY")
+    supplied = request.headers.get("X-SPU-Admin-Key", "")
+    if not expected or not compare_digest(supplied.encode(), expected.encode()):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
 @app.get("/api/v1/stations/{station_id}/forecast/hourly")
-def station_hourly_prediction(station_id: str):
+def station_hourly_prediction(
+    station_id: str, request: Request, shap_horizon: Optional[int] = Query(default=None, ge=1, le=6),
+):
+    if shap_horizon is not None:
+        require_admin_api(request)
     return {
         "stationId": station_id.upper(),
-        "hourlyForecast": hourly_forecast(station_id, datetime.now(BKK_TZ)),
+        "hourlyForecast": hourly_forecast(station_id, datetime.now(BKK_TZ), shap_horizon=shap_horizon),
     }
 
 
@@ -542,14 +561,33 @@ def station_hourly_comparison(station_id: str, horizon: int = Query(1, ge=1, le=
         raise HTTPException(status_code=503, detail="Hourly comparison unavailable") from exc
 
 
+@app.get("/api/v1/stations/{station_id}/forecast/hourly-weather-experiment")
+def hourly_weather_experiment(station_id: str, request: Request, horizon: int = Query(1, ge=1, le=6)):
+    require_admin_api(request)
+    try:
+        return weather_explanation(station_id.strip(), horizon, datetime.now(BKK_TZ))
+    except (OSError, ValueError) as exc:
+        logger.warning("Experimental weather explanation unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail="Experimental weather model unavailable") from exc
+
+
+@app.get("/api/v1/stations/{station_id}/forecast/hourly-issued")
+def issued_hourly_comparison(station_id: str, request: Request, horizon: int = Query(1, ge=1, le=6)):
+    require_admin_api(request)
+    return compare_issued_hourly(station_id.strip().upper(), horizon, datetime.now(BKK_TZ))
+
+
 @app.get("/api/v1/forecast")
 def forecast_status(
+    request: Request,
     station_id: Optional[str] = Query(default=None),
     district: Optional[str] = Query(default=None),
     horizon: str = Query(default="24h"),
     refresh: bool = Query(default=False),
     diagnostics: bool = False,
 ):
+    if diagnostics:
+        require_admin_api(request)
     if horizon not in {"24h", "1d", "tomorrow"}:
         raise HTTPException(status_code=422, detail="Only the next Bangkok calendar day is supported")
     snapshot = require_snapshot(refresh)
@@ -616,7 +654,8 @@ def forecast_status(
 
 
 @app.get("/api/v1/evaluation")
-def evaluation():
+def evaluation(request: Request):
+    require_admin_api(request)
     if station_bundle:
         return station_bundle["report"]
     raise HTTPException(

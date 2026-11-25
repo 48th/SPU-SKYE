@@ -24,7 +24,7 @@ export default function MobileAirNavigation() {
       <nav aria-label="เมนูหลักบนมือถือ" className="bangkok-ui-font fixed inset-x-3 z-30 mx-auto max-w-sm sm:hidden [bottom:calc(.65rem+env(safe-area-inset-bottom,0px))]">
         {menuOpen && (
           <div id="mobile-insights-menu" className="absolute inset-x-0 bottom-full mb-2 rounded-2xl border border-neutral-200 bg-white p-2 shadow-lg">
-            <a href="/map#shap" onClick={() => setMenuOpen(false)} className="block rounded-xl px-3 py-3 text-sm font-semibold hover:bg-neutral-100">วิเคราะห์ปัจจัย SHAP</a>
+            <a href="/map#hourly" onClick={() => setMenuOpen(false)} className="block rounded-xl px-3 py-3 text-sm font-semibold hover:bg-neutral-100">พยากรณ์รายชั่วโมง</a>
             <a href="/map#standards" onClick={() => setMenuOpen(false)} className="block rounded-xl px-3 py-3 text-sm font-semibold hover:bg-neutral-100">เกณฑ์มาตรฐาน PM2.5</a>
           </div>
         )}

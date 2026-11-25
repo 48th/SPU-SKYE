@@ -279,6 +279,35 @@ export async function fetchLiveStations(forceRefresh = false, externalSignal?: A
     return null;
   }
 }
+export type DistrictTomorrowForecast = {
+  date: string;
+  modelName?: string;
+  stationCount: number;
+  forecastCount: number;
+  averagePM25: number | null;
+};
+
+export async function fetchDistrictTomorrow(district: District, signal: AbortSignal): Promise<DistrictTomorrowForecast> {
+  const query = new URLSearchParams({ district, horizon: "tomorrow" });
+  const payload = await getJson("/forecast?" + query, signal, STATION_ORIGIN + "/api/v1");
+  if (typeof payload.targetDate !== "string" || !Array.isArray(payload.stations)) {
+    throw new Error("Invalid district forecast response");
+  }
+
+  const stations = payload.stations.filter(station => station?.district === district);
+  const predictions = stations.flatMap(station => {
+    const value = numeric(station.predictedPM25);
+    return station.forecastAvailable === true && value >= 0 ? [value] : [];
+  });
+  return {
+    date: payload.targetDate,
+    modelName: typeof payload.modelName === "string" ? payload.modelName : undefined,
+    stationCount: stations.length,
+    forecastCount: predictions.length,
+    averagePM25: predictions.length ? predictions.reduce((sum, value) => sum + value, 0) / predictions.length : null,
+  };
+}
+
 export async function fetchForecast(stationId: District, horizon: ForecastHorizon, externalSignal?: AbortSignal, forceRefresh = false): Promise<ForecastResult> {
   try {
     const payload = await getJson("/forecast?station_id=" + encodeURIComponent(stationId)

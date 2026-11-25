@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.docker.txt
 
 COPY *.py *.cjs live.html airbkk_hourly_stations.json airbkk-daily-2026-11-09-to-22.csv ./
 COPY models/ ./models/
-COPY docker-seed/station_pm25.sqlite3 /data/station_pm25.sqlite3
+RUN mkdir -p /data
 
 EXPOSE 8001
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

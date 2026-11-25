@@ -128,9 +128,6 @@ def sync_batch(now, station_by_index, targets=None):
 
 def store_rows(rows):
     with database() as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS airbkk_hourly (
-            station_id TEXT NOT NULL, observed_at TEXT NOT NULL, pm25 REAL NOT NULL,
-            fetched_at TEXT NOT NULL, PRIMARY KEY (station_id, observed_at))""")
         conn.executemany("""INSERT INTO airbkk_hourly VALUES (?, ?, ?, ?)
             ON CONFLICT(station_id, observed_at) DO UPDATE SET
             pm25=excluded.pm25, fetched_at=excluded.fetched_at
@@ -244,6 +241,8 @@ def run_hourly(stop):
             logger.info("Hourly collection: %s valid rows", sync_hourly(now, stop))
             if not stop.is_set():
                 logger.info("Hourly backfill: %s valid rows", backfill_missing_hours(datetime.now(BKK_TZ), stop))
+            if not stop.is_set():
+                logger.info("Hourly forecasts issued: %s new station-hours", record_hourly_issuance(stop))
         except Exception:
             logger.exception("AirBKK hourly sync unsuccessful")
         stop.wait(15 * 60)
@@ -325,7 +324,68 @@ def compare_hourly_forecast(station_id, horizon, now):
             "mae": round(sum(errors) / len(errors), 2)}
 
 
-def hourly_forecast(station_id, now, *, diagnostics_only=False):
+@lru_cache(maxsize=128)
+def exact_hourly_shap(model, feature_names, current, references):
+    """Shapley values over all feature subsets using historical rows as background."""
+    import numpy as np
+    import pandas as pd
+
+    feature_count = len(feature_names)
+    subsets = np.arange(1 << feature_count)
+    masks = (subsets[:, None] & (1 << np.arange(feature_count))) != 0
+    background = np.asarray(references)
+    masked_rows = np.where(masks[:, None, :], np.asarray(current), background[None, :, :])
+    frame = pd.DataFrame(masked_rows.reshape(-1, feature_count), columns=feature_names)
+    coalition_values = model.predict(frame).reshape(len(subsets), len(references)).mean(axis=1)
+    subset_sizes = masks.sum(axis=1)
+    weights = np.array([
+        1 / (feature_count * math.comb(feature_count - 1, size))
+        for size in range(feature_count)
+    ])
+    contributions = []
+    for index, feature in enumerate(feature_names):
+        excluded = subsets[~masks[:, index]]
+        changes = coalition_values[excluded | (1 << index)] - coalition_values[excluded]
+        contributions.append({
+            "feature": feature,
+            "value": float(weights[subset_sizes[excluded]] @ changes),
+        })
+    return {
+        "baseValue": float(coalition_values[0]),
+        "predictedPM25": float(coalition_values[-1]),
+        "contributions": sorted(contributions, key=lambda item: abs(item["value"]), reverse=True),
+    }
+
+
+def explain_hourly_forecast(station_id, base, bundle, features, horizon):
+    feature_names = tuple(bundle["features"])
+    if len(feature_names) > 12:
+        return {"reason": "explanation_unavailable"}
+    start = base - timedelta(days=7, hours=max(bundle["lags"]))
+    with database() as conn:
+        rows = conn.execute(
+            """SELECT observed_at, pm25 FROM airbkk_hourly
+               WHERE station_id=? AND observed_at>=? AND observed_at<?
+               ORDER BY observed_at""",
+            (station_id, start.isoformat(), base.isoformat()),
+        ).fetchall()
+    history = {datetime.fromisoformat(stamp): value for stamp, value in rows}
+    candidates = []
+    for stamp in history:
+        if stamp >= base - timedelta(days=7):
+            row = hourly_features(history, stamp, bundle["lags"])
+            if row is not None:
+                candidates.append(tuple(row[name] for name in feature_names))
+    if not candidates:
+        return {"reason": "no_reference_history"}
+    count = min(8, len(candidates))
+    references = tuple(candidates[(i * len(candidates)) // count] for i in range(count))
+    current = tuple(features[name] for name in feature_names)
+    explanation = exact_hourly_shap(bundle["models"][horizon], feature_names, current, references)
+    return {"hoursAhead": horizon, "referenceCount": count, **explanation}
+
+
+def hourly_forecast(station_id, now, *, diagnostics_only=False, shap_horizon=None):
     station_id = station_id.upper()
     if station_id not in STATIONS and station_id not in AQM_STATIONS:
         return {"reason": "station_not_supported", "points": []}
@@ -360,8 +420,73 @@ def hourly_forecast(station_id, now, *, diagnostics_only=False):
         return {**result, "ready": True}
     features = hourly_features(history, base, bundle["lags"])
     frame = pd.DataFrame([features], columns=bundle["features"])
-    return {**result, "points": [
+    result["points"] = [
         {"hoursAhead": h, "targetAt": (base + h * HOUR).isoformat(),
          "predictedPM25": round(float(bundle["models"][h].predict(frame)[0]), 2)}
         for h in range(1, 7)
-    ]}
+    ]
+    if shap_horizon is not None:
+        try:
+            result["shap"] = explain_hourly_forecast(station_id, base, bundle, features, shap_horizon)
+        except Exception:
+            logger.exception("Hourly SHAP unavailable for %s", station_id)
+            result["shap"] = {"reason": "explanation_unavailable"}
+    return result
+
+
+
+def record_hourly_issuance(stop):
+    """Record the first forecast computed for each station, base hour and horizon."""
+    rows = []
+    model_file = os.path.basename(os.environ.get("PM25_HOURLY_MODEL_PATH") or "BKP102T-hourly-extra-trees.joblib")
+    for station_id in dict.fromkeys((*STATIONS, *AQM_STATIONS)):
+        if stop.is_set():
+            break
+        try:
+            forecast = hourly_forecast(station_id, datetime.now(BKK_TZ))
+            issued_at = datetime.now(BKK_TZ)
+            for point in forecast["points"]:
+                if datetime.fromisoformat(point["targetAt"]) > issued_at:
+                    rows.append((
+                        station_id, forecast["observedAt"], point["hoursAhead"], point["targetAt"],
+                        issued_at.isoformat(), point["predictedPM25"],
+                        forecast["latestObservation"]["pm25"], model_file,
+                    ))
+        except Exception:
+            logger.exception("Could not issue hourly forecast for %s", station_id)
+    with database() as conn:
+        result = conn.executemany(
+            """INSERT INTO hourly_forecast_issuance VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(station_id, base_at, horizon) DO NOTHING""",
+            rows,
+        )
+        return result.rowcount
+
+
+def compare_issued_hourly(station_id, horizon, now):
+    """Compare recorded forecasts against subsequent observations for the same station and hour."""
+    with database() as conn:
+        rows = conn.execute(
+            """SELECT f.issued_at, f.base_at, f.target_at, f.predicted, f.persistence, f.model_file, a.pm25
+               FROM hourly_forecast_issuance AS f
+               LEFT JOIN airbkk_hourly AS a
+                 ON a.station_id = f.station_id AND a.observed_at = f.target_at AND f.target_at <= ?
+               WHERE f.station_id = ? AND f.horizon = ? AND f.issued_at BETWEEN ? AND ?
+               ORDER BY f.target_at DESC""",
+            (now.isoformat(), station_id, horizon, (now - timedelta(days=7)).isoformat(), now.isoformat()),
+        ).fetchall()
+    points = [
+        {"issuedAt": issued_at, "baseAt": base_at, "targetAt": target_at, "predicted": predicted,
+         "persistence": persistence, "modelFile": model_file, "actual": actual}
+        for issued_at, base_at, target_at, predicted, persistence, model_file, actual in rows
+    ]
+    matched = [point for point in points if point["actual"] is not None]
+    pending = sum(datetime.fromisoformat(point["targetAt"]) > now for point in points)
+    return {
+        "stationId": station_id, "horizon": horizon, "windowDays": 7,
+        "issuedCount": len(points), "matchedCount": len(matched),
+        "pendingCount": pending, "missingActualCount": len(points) - len(matched) - pending,
+        "modelMae": sum(abs(point["predicted"] - point["actual"]) for point in matched) / len(matched) if matched else None,
+        "persistenceMae": sum(abs(point["persistence"] - point["actual"]) for point in matched) / len(matched) if matched else None,
+        "points": points[:12],
+    }

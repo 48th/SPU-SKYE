@@ -18,14 +18,7 @@ export async function GET() {
       throw new Error(`Air4Thai HTTP ${response.status}`);
     }
 
-    const data = await response.json();console.log(
-  "AIR4THAI RAW SAMPLE:",
-  JSON.stringify(data.stations?.[0], null, 2)
-);
-    console.log(
-  "AIR4THAI RAW SAMPLE:",
-  JSON.stringify(data.stations?.[0], null, 2)
-);
+    const data = await response.json();
 
     if (!Array.isArray(data?.stations)) {
       throw new Error("รูปแบบข้อมูล Air4Thai ไม่ถูกต้อง");
@@ -80,6 +73,40 @@ observedAt:
 });
 
 } catch (error) {
+  const backend = process.env.AIR_QUALITY_BACKEND_URL;
+  if (backend) {
+    try {
+      const response = await fetch(new URL("/api/v1/stations", backend), {
+        cache: "no-store",
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) throw new Error(`Backend HTTP ${response.status}`);
+      const data: {
+        fetchedAt: string;
+        stations: {
+          id: string; name: string; district: string | null; lat: number;
+          lon: number; currentPM25: number | null; observedAt: string | null;
+        }[];
+      } = await response.json();
+      const stations = data.stations.map((station) => ({
+        id: station.id,
+        name: station.name,
+        district: station.district ?? "",
+        lat: station.lat,
+        lng: station.lon,
+        pm25: station.currentPM25,
+        observedAt: station.observedAt ?? "",
+      }));
+      return NextResponse.json({
+        source: "Air4Thai",
+        fetchedAt: data.fetchedAt,
+        count: stations.length,
+        stations,
+      });
+    } catch (fallbackError) {
+      console.error("Air4Thai backend fallback error:", fallbackError);
+    }
+  }
   console.error("Air4Thai API error:", error);
 
   const message =
