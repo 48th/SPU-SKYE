@@ -272,23 +272,26 @@ def hourly_features(history, base, lags):
     return {**row, "sin": math.sin(angle), "cos": math.cos(angle)}
 
 
-def compare_hourly_forecast(station_id, horizon, now):
+def compare_hourly_forecast(station_id, horizon, now, *, show_history=False):
     station_id = station_id.strip().upper()
     source = "AirBKK" if station_id in STATIONS else "AQMThai"
     result = {"stationId": station_id, "horizon": horizon, "source": source,
-              "points": [], "sampleCount": 0, "mae": None}
+              "points": [], "sampleCount": 0, "mae": None,
+              "holdoutCount": 0, "holdoutMae": None, "contextCount": 0}
     if station_id not in STATIONS and station_id not in AQM_STATIONS:
         return {**result, "reason": "station_not_supported"}
 
     import pandas as pd
 
     bundle = load_model()
+    result["modelName"] = bundle.get("model_name", type(bundle["models"][1]).__name__)
     cutoff = datetime.fromisoformat(bundle["training_end"])
     if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=BKK_TZ)
     start = now.replace(minute=0, second=0, microsecond=0) - timedelta(days=7)
     earliest = max(start, cutoff.replace(minute=0, second=0, microsecond=0) + (horizon + 1) * HOUR)
-    lookback = earliest - (max(bundle["lags"]) + horizon) * HOUR
+    chart_start = start if show_history else earliest
+    lookback = chart_start - (max(bundle["lags"]) + horizon) * HOUR
     with database() as conn:
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='airbkk_hourly'").fetchone()
         rows = conn.execute(
@@ -297,7 +300,7 @@ def compare_hourly_forecast(station_id, horizon, now):
             (station_id, lookback.isoformat(), now.isoformat()),
         ).fetchall() if exists else []
     history = {datetime.fromisoformat(stamp): value for stamp, value in rows}
-    targets = [stamp for stamp in history if stamp >= earliest]
+    targets = [stamp for stamp in history if stamp >= chart_start]
     if not targets:
         return {**result, "reason": "no_observations"}
 
@@ -308,9 +311,10 @@ def compare_hourly_forecast(station_id, horizon, now):
     while target <= end:
         issue = target - horizon * HOUR
         actual = history.get(target)
-        point = {"targetAt": target.isoformat(), "actual": actual, "predicted": None}
+        point = {"targetAt": target.isoformat(), "actual": actual, "predicted": None,
+                 "holdout": target >= earliest and issue > cutoff}
         points.append(point)
-        features = hourly_features(history, issue, bundle["lags"]) if actual is not None and issue > cutoff else None
+        features = hourly_features(history, issue, bundle["lags"]) if actual is not None and (show_history or point["holdout"]) else None
         if features is not None:
             pairs.append((point, features))
         target += HOUR
@@ -319,12 +323,18 @@ def compare_hourly_forecast(station_id, horizon, now):
 
     frame = pd.DataFrame([features for _, features in pairs], columns=bundle["features"])
     predicted = bundle["models"][horizon].predict(frame)
-    errors = []
+    errors, holdout_errors = [], []
     for (point, _), value in zip(pairs, predicted):
         point["predicted"] = round(float(value), 2)
-        errors.append(abs(point["predicted"] - point["actual"]))
+        error = abs(point["predicted"] - point["actual"])
+        errors.append(error)
+        if point["holdout"]:
+            holdout_errors.append(error)
     return {**result, "points": points, "sampleCount": len(errors),
-            "mae": round(sum(errors) / len(errors), 2)}
+            "mae": round(sum(errors) / len(errors), 2),
+            "holdoutCount": len(holdout_errors),
+            "holdoutMae": round(sum(holdout_errors) / len(holdout_errors), 2) if holdout_errors else None,
+            "contextCount": len(errors) - len(holdout_errors)}
 
 
 @lru_cache(maxsize=128)

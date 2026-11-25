@@ -553,9 +553,13 @@ def station_hourly_prediction(
 
 
 @app.get("/api/v1/stations/{station_id}/forecast/hourly-comparison")
-def station_hourly_comparison(station_id: str, horizon: int = Query(1, ge=1, le=6)):
+def station_hourly_comparison(
+    station_id: str, request: Request, horizon: int = Query(1, ge=1, le=6), show_history: bool = False,
+):
+    if show_history:
+        require_admin_api(request)
     try:
-        return compare_hourly_forecast(station_id, horizon, datetime.now(BKK_TZ))
+        return compare_hourly_forecast(station_id, horizon, datetime.now(BKK_TZ), show_history=show_history)
     except (FileNotFoundError, ValueError) as exc:
         logger.warning("Hourly comparison model unavailable: %s", exc)
         raise HTTPException(status_code=503, detail="Hourly comparison unavailable") from exc

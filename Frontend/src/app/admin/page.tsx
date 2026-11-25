@@ -34,7 +34,11 @@ type Comparison = {
   horizon: number;
   source: string;
   sampleCount: number;
+  modelName?: string;
   mae: number | null;
+  holdoutCount: number;
+  holdoutMae: number | null;
+  contextCount: number;
   reason?: string;
   points: { targetAt: string; actual: number | null; predicted: number | null }[];
 };
@@ -241,7 +245,7 @@ export default function AdminPage() {
     if (!comparisonId) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
-    const url = "/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly-comparison?horizon=" + comparisonHorizon;
+    const url = "/stations/" + encodeURIComponent(comparisonId) + "/forecast/hourly-comparison?show_history=true&horizon=" + comparisonHorizon;
     request<Comparison>(url, signal).then(value => {
       if (!controller.signal.aborted) setComparison({ id: comparisonId, horizon: comparisonHorizon, value });
     }).catch(() => {
@@ -395,7 +399,7 @@ export default function AdminPage() {
             </div>
           </section>
           <section className={panel} aria-labelledby="forecast-actual-title">
-            <h2 id="forecast-actual-title" className="text-lg font-bold">ทดสอบย้อนหลังเทียบค่าจริง</h2>
+            <h2 id="forecast-actual-title" className="text-lg font-bold">พยากรณ์เทียบค่าจริง</h2>
             <p className="mt-1 text-sm text-neutral-600">คำนวณย้อนหลังด้วยโมเดลที่ระบบใช้อยู่ เทียบกับค่าที่สถานีวัดได้ในชั่วโมงเดียวกัน</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem]">
               <label className="min-w-0 text-xs font-semibold text-neutral-700">สถานี
@@ -414,8 +418,8 @@ export default function AdminPage() {
             </div>
             {comparisonResult?.points.length ? (
               <>
-                <p className="mt-4 text-xs text-neutral-600">µg/m³ · {comparisonResult.source} · {comparisonResult.sampleCount.toLocaleString("th-TH")} คู่ที่เทียบได้
-                  {comparisonResult.mae != null && " · MAE " + formatReading(comparisonResult.mae, 2)}
+                <p className="mt-4 text-xs text-neutral-600">µg/m³ · {comparisonResult.source}{comparisonResult.modelName && " · " + comparisonResult.modelName} · {comparisonResult.sampleCount.toLocaleString("th-TH")} คู่ที่เทียบได้
+                  {comparisonResult.mae != null && " · MAE ย้อนหลังรวม " + formatReading(comparisonResult.mae, 2)}
                 </p>
                 <div className="mt-2 h-64 w-full min-w-0">
                   <ResponsiveContainer width="100%" height="100%">
@@ -434,6 +438,14 @@ export default function AdminPage() {
                 {lastPair && <p className="mt-3 rounded-xl bg-neutral-100 px-3 py-2 text-sm text-neutral-700">
                   {time(lastPair.targetAt)} · จริง <strong>{formatReading(lastPair.actual!)}</strong> · พยากรณ์ <strong>{formatReading(lastPair.predicted!)}</strong> µg/m³
                 </p>}
+                {!!comparisonResult.contextCount && (
+                  <p className="mt-2 text-xs text-neutral-600">
+                    กราฟรวม {comparisonResult.contextCount} คู่ในช่วงฝึกหรือช่วงคาบเกี่ยว
+                    {comparisonResult.holdoutMae == null
+                      ? " · ยังไม่มีคู่ทดสอบนอกช่วงฝึก"
+                      : " · MAE เฉพาะชุดทดสอบ " + formatReading(comparisonResult.holdoutMae, 2) + " µg/m³ จาก " + comparisonResult.holdoutCount + " คู่"}
+                  </p>
+                )}
                 {!!comparisonResult.sampleCount && (
                   <div className="mt-4">
                     <h3 className="text-sm font-semibold">ความคลาดเคลื่อนตามช่วงเวลาที่พยากรณ์ถึง</h3>
@@ -459,7 +471,7 @@ export default function AdminPage() {
                         ))}
                       </tbody>
                     </table>
-                    <p className="mt-2 text-xs text-neutral-600">หน่วย µg/m³ · ค่าบวกหมายถึงทายสูงกว่าค่าจริงโดยเฉลี่ย · ช่วงทดสอบย้อนหลังสูงสุด 7 วัน</p>
+                    <p className="mt-2 text-xs text-neutral-600">หน่วย µg/m³ · ค่าบวกหมายถึงทายสูงกว่าค่าจริงโดยเฉลี่ย · แสดงผลย้อนหลังสูงสุด 7 วัน · ตารางสรุปจากคู่ทั้งหมดในกราฟ</p>
                   </div>
                 )}
                 {!comparisonResult.sampleCount && <p role="status" className="mt-2 text-sm text-neutral-600">มีค่าจริง แต่ช่วงนี้ยังไม่มีชั่วโมงที่ข้อมูลเข้าโมเดลครบสำหรับเทียบผล</p>}
@@ -526,7 +538,7 @@ export default function AdminPage() {
 
           <section className={panel} aria-labelledby="hourly-shap-title">
             <h2 id="hourly-shap-title" className="text-lg font-bold">วิเคราะห์ปัจจัย PM2.5</h2>
-            <p className="mt-1 text-sm text-neutral-600">ใช้สถานีและช่วงเวลาที่เลือกในส่วนทดสอบย้อนหลังด้านบน
+            <p className="mt-1 text-sm text-neutral-600">ใช้สถานีและช่วงเวลาที่เลือกในส่วนพยากรณ์เทียบค่าจริงด้านบน
               {comparisonId && " · " + comparisonId.toUpperCase() + " · ล่วงหน้า " + comparisonHorizon + " ชั่วโมง"}
             </p>
             <h3 className="mt-4 font-bold">ปัจจัยที่โมเดลใช้ · SHAP{hourlyExplanation?.modelName && " · " + hourlyExplanation.modelName}</h3>
